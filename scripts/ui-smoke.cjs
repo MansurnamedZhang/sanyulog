@@ -51,6 +51,34 @@ const assert = require("node:assert/strict");
     await page.goto("http://127.0.0.1:" + port);
     await page.locator("[data-action=select]").first().click();
     await page.locator(".nb-title").waitFor();
+    const popupPromise = page.waitForEvent("popup");
+    await page.locator('[data-nb="export-image"]').first().click();
+    const exported = await popupPromise;
+    const download = await exported.waitForEvent("download");
+    const imagePath = path.join(root, "cell.png");
+    await download.saveAs(imagePath);
+    assert(
+      fs.statSync(imagePath).size > 10000,
+      "PNG contains rendered content",
+    );
+    assert.equal(await exported.locator("#content h2").count(), 1);
+    assert.equal(
+      await exported.locator("#content .nb-cell-actions").count(),
+      0,
+    );
+    assert(
+      !(await exported.locator("#content").innerText()).includes(
+        "learning_rate",
+      ),
+    );
+    if (process.env.UI_EXPORT_CAPTURE)
+      fs.copyFileSync(imagePath, process.env.UI_EXPORT_CAPTURE);
+    await exported.emulateMedia({ media: "print" });
+    assert(await exported.locator("header").isHidden());
+    const pdfBytes = await exported.pdf({ preferCSSPageSize: true });
+    assert(pdfBytes.subarray(0, 5).toString() === "%PDF-");
+    assert(pdfBytes.length > 10000);
+    await exported.close();
     for (const [width, height] of [
       [1440, 1000],
       [1280, 900],

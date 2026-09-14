@@ -1,0 +1,115 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #eceee8;
+  color: #26352d;
+  font:
+    16px/1.75 system-ui,
+    "Microsoft YaHei",
+    sans-serif;
+}
+header {
+  padding: 16px 24px;
+  background: white;
+  border-bottom: 1px solid #d9dfd2;
+}
+button {
+  margin: 4px 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+header p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+main {
+  overflow: auto;
+  padding: 24px;
+}
+article {
+  width: 800px;
+  padding: 40px;
+  margin: auto;
+  background: white;
+  overflow-wrap: anywhere;
+}
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.4;
+  break-after: avoid;
+}
+p,
+ul,
+ol,
+pre,
+blockquote,
+table {
+  margin: 0 0 16px;
+}
+li > ul,
+li > ol {
+  margin-bottom: 0;
+}
+pre {
+  white-space: pre-wrap;
+  padding: 16px;
+  background: #f3f5f0;
+}
+code {
+  font-family: Consolas, monospace;
+  background: #f3f5f0;
+}
+blockquote {
+  border-left: 3px solid #a8b998;
+  padding-left: 16px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+th,
+td {
+  border: 1px solid #cdd5c8;
+  padding: 8px;
+  overflow-wrap: anywhere;
+}
+th {
+  background: #f3f5f0;
+}
+tr,
+math {
+  break-inside: avoid;
+}
+img {
+  max-width: 100%;
+}
+a {
+  color: #3c643f;
+}
+@page {
+  size: A4;
+  margin: 16mm;
+}
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  header {
+    display: none;
+  }
+  main {
+    padding: 0;
+    overflow: visible;
+  }
+  article {
+    width: auto;
+    margin: 0;
+    padding: 0;
+  }
+}

@@ -15,3 +15,7 @@ Its upstream license and the licenses of its binary dependencies apply separatel
 
 Prettier is a development-only formatter distributed under the MIT license.
 It is not required to run Process Log.
+
+## html-to-image 1.11.13
+MIT License. Source: https://github.com/bubkoo/html-to-image
+Vendored browser bundle: static/vendor/html-to-image.js; license: static/vendor/html-to-image.LICENSE.

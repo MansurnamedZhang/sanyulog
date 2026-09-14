@@ -280,7 +280,7 @@ export class Notebook {
       )
       .join(
         "",
-      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<button data-nb="toggle" class="text-button">${preview ? "编辑" : "预览"}</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div class="nb-markdown" data-nb="edit-preview">${renderMarkdown(cell.source)}</div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
+      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<button data-nb="toggle" class="text-button">${preview ? "编辑" : "预览"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div class="nb-markdown" data-nb="edit-preview">${renderMarkdown(cell.source)}</div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
       <div class="nb-cell-files">${this.filesHTML(cell.attachment_ids)}</div>${cell.type === "file" ? '<button class="nb-upload" data-nb="cell-file">＋ 上传图片或文件 <span>也可以直接粘贴截图 · 单个最大 25 MB</span></button>' : ""}</div></article>`;
   }
   tableRows(cell) {
@@ -528,6 +528,24 @@ export class Notebook {
     const action = button.dataset.nb,
       id = button.closest("[data-cell]")?.dataset.cell;
     if (id) this.setActive(id);
+    if (action === "export-image" || action === "export-pdf") {
+      const key = "cell-export-" + newId();
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          cell: this.cell(id),
+          title: this.queue.data.title,
+          mode: action === "export-image" ? "image" : "pdf",
+        }),
+      );
+      const popup = window.open("/cell-export.html#" + key, "_blank");
+      if (!popup) {
+        sessionStorage.removeItem(key);
+        throw new Error("请允许弹出窗口后重试导出");
+      }
+      setTimeout(() => sessionStorage.removeItem(key), 60000);
+      return;
+    }
     if (action.startsWith("grid-")) {
       const cell = this.cell(id),
         rows = this.tableRows(cell),

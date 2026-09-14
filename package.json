@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/notebook.test.mjs",
-    "check": "node --check static/app.js && node --check static/notebook.js && node --check static/notebook-core.mjs",
+    "check": "node --check static/app.js && node --check static/notebook.js && node --check static/notebook-core.mjs && node --check static/cell-export.js",
     "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
     "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
     "test:ui": "node scripts/ui-smoke.cjs"
