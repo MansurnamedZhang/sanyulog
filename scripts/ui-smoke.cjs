@@ -98,6 +98,37 @@ const assert = require("node:assert/strict");
       await area.inputValue(),
       "    - 手\n    - 发丝\n    - 服装褶皱",
     );
+    await area.fill(
+      Array.from({ length: 120 }, (_, i) => "连续记录第 " + i + " 行").join(
+        "\n",
+      ),
+    );
+    await area.press("Control+End");
+    await area.evaluate((el) => {
+      const container = el.closest("#detail");
+      container.scrollTop +=
+        el.getBoundingClientRect().bottom -
+        container.getBoundingClientRect().bottom +
+        100;
+    });
+    await page.waitForTimeout(400);
+    for (let i = 0; i < 3; i++) {
+      const before = await page.locator("#detail").evaluate((e) => e.scrollTop);
+      await area.press("Enter");
+      await page.waitForTimeout(150);
+      const after = await page.locator("#detail").evaluate((e) => e.scrollTop);
+      assert(Math.abs(after - before) < 65, `Enter jumped ${after - before}px`);
+    }
+    for (const key of ["a", "Backspace", "Backspace"]) {
+      const before = await page.locator("#detail").evaluate((e) => e.scrollTop);
+      await area.press(key);
+      await page.waitForTimeout(100);
+      const after = await page.locator("#detail").evaluate((e) => e.scrollTop);
+      assert(
+        Math.abs(after - before) < 65,
+        `${key} jumped ${after - before}px`,
+      );
+    }
     await area.fill(original);
     await page.locator(".nb-title").click();
     assert(await first.locator(".nb-format-toolbar").isHidden());

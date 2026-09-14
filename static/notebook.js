@@ -372,8 +372,44 @@ export class Notebook {
     );
   }
   grow(area) {
-    area.style.height = "auto";
-    area.style.height = Math.max(64, area.scrollHeight) + "px";
+    // Measure off-screen: shrinking the focused textarea clamps its ancestor's
+    // scroll position and can move the caret by an entire viewport.
+    const style = getComputedStyle(area);
+    const measure = area.cloneNode(false);
+    measure.removeAttribute("data-source");
+    measure.removeAttribute("id");
+    measure.setAttribute("aria-hidden", "true");
+    measure.tabIndex = -1;
+    measure.value = area.value;
+    Object.assign(measure.style, {
+      position: "fixed",
+      left: "-10000px",
+      top: "0",
+      visibility: "hidden",
+      pointerEvents: "none",
+      width: area.getBoundingClientRect().width + "px",
+      height: "0",
+      minHeight: "0",
+      maxHeight: "none",
+      overflow: "hidden",
+      boxSizing: style.boxSizing,
+      font: style.font,
+      lineHeight: style.lineHeight,
+      letterSpacing: style.letterSpacing,
+      padding: style.padding,
+      border: style.border,
+      whiteSpace: style.whiteSpace,
+      wordBreak: style.wordBreak,
+      overflowWrap: style.overflowWrap,
+      tabSize: style.tabSize,
+    });
+    area.ownerDocument.body.append(measure);
+    const height =
+      measure.scrollHeight +
+      parseFloat(style.borderTopWidth) +
+      parseFloat(style.borderBottomWidth);
+    measure.remove();
+    area.style.height = Math.max(64, height) + "px";
   }
   cell(id = this.active) {
     return this.queue.data.cells.find((c) => c.id === id);

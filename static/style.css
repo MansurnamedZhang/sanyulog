@@ -1568,7 +1568,7 @@ textarea::placeholder {
   min-height: 0;
   padding: 36px clamp(20px, 4vw, 72px) 64px;
   background: white;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-top: 76px;
 }
 .detail > * {
