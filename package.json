@@ -1,15 +1,17 @@
 {
   "name": "process-log",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/notebook.test.mjs",
     "check": "node --check static/app.js && node --check static/notebook.js && node --check static/notebook-core.mjs",
-    "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs",
-    "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs"
+    "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
+    "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
+    "test:ui": "node scripts/ui-smoke.cjs"
   },
   "devDependencies": {
+    "playwright": "1.58.2",
     "prettier": "3.6.2"
   }
 }

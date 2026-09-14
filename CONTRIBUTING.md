@@ -37,3 +37,12 @@ python -m unittest discover -s tests -v
 ## 提交 GitHub
 
 本地验证通过后，创建 GitHub 空仓库并将其地址设置为 `origin`。先查看 `git status` 和暂存区差异，再创建提交和推送。项目许可证由维护者决定，第三方许可证必须保留。
+
+## 浏览器布局回归
+
+```sh
+npx playwright install chromium
+npm run test:ui
+```
+
+此命令启动独立临时 SQLite 服务和演示数据，检查 6 种屏宽及核心导航/编辑操作，完成后清理临时数据。无需运行已有服务，也不会连接正式数据库。可通过 `UI_BROWSER_PATH` 指定本机 Chrome 可执行文件，或通过 `PYTHON` 指定 Python 命令。不要将截图中的演示内容当作正式用户记录。

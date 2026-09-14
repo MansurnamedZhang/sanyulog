@@ -92,12 +92,18 @@ async function refresh(detail = true) {
   if (detail) renderDetail();
 }
 function renderNav() {
+  $("[data-action=navigation]").setAttribute(
+    "aria-expanded",
+    String(document.body.classList.contains("navigation-open")),
+  );
   $("#workspace-select").innerHTML = state.workspaces
     .map(
       (w) =>
         `<option value="${esc(w.id)}" ${w.id === workspace ? "selected" : ""}>${esc(w.name)}</option>`,
     )
     .join("");
+  $("#workspace-label").textContent =
+    state.workspaces.find((w) => w.id === workspace)?.name || "默认工作空间";
   const p = state.projects.find((p) => p.id === project);
   $("#project-label").textContent = $("#page-title").textContent =
     p?.name || "全部记录";
@@ -164,7 +170,16 @@ function renderList() {
     ? records
         .map(
           (r) =>
-            `<button class="record-card ${r.id === selected ? "active" : ""}" data-action="select" data-id="${r.id}" aria-pressed="${r.id === selected}"><div class="card-top"><span class="status ${statusClass(r.status)}">${esc(r.status)}</span><time>${fmt(r.updated)}</time></div><h3>${esc(r.title)}</h3><p class="card-excerpt">${esc(r.cells?.find((c) => c.source.trim())?.source || r.goal || "空白笔记本，从一个单元格开始。")}</p><div class="card-bottom"><span>${r.tags.length ? "# " + esc(r.tags.slice(0, 2).join(" · ")) : esc(state.projects.find((p) => p.id === r.project_id)?.name || "")}</span><span>${r.cells?.length || 0} 个单元</span></div></button>`,
+            `<button class="record-card ${r.id === selected ? "active" : ""}" data-action="select" data-id="${r.id}" aria-pressed="${r.id === selected}"><div class="card-top"><span class="status ${statusClass(r.status)}">${esc(r.status)}</span><time>${fmt(r.updated)}</time></div><h3>${esc(r.title)}</h3><p class="card-excerpt">${esc(
+              (
+                r.cells?.find((c) => c.source.trim())?.source ||
+                r.goal ||
+                "空白笔记本，从一个单元格开始。"
+              )
+                .replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+)/gm, "")
+                .replace(/[*`]/g, "")
+                .replace(/\s+/g, " "),
+            )}</p><div class="card-bottom"><span>${r.tags.length ? "# " + esc(r.tags.slice(0, 2).join(" · ")) : esc(state.projects.find((p) => p.id === r.project_id)?.name || "")}</span><span>${r.cells?.length || 0} 个单元</span></div></button>`,
         )
         .join("")
     : `<div class="padded"><p class="muted">${state.records.length ? "没有匹配的记录。试试其他关键词或筛选条件。" : "记录会按最近更新时间排列在这里。"}</p></div>`;
@@ -172,13 +187,13 @@ function renderList() {
 function selectRecord(id) {
   document.body.classList.add("reading-note");
   document.body.classList.remove("navigation-open");
+  document.body.classList.add("has-note");
   selected = id;
   dirty = false;
   tab = "timeline";
   renderList();
   renderDetail();
-  if (window.innerWidth < 801)
-    $("#detail").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#detail").scrollTop = 0;
 }
 function renderDetail() {
   notebook?.dispose();
@@ -186,7 +201,10 @@ function renderDetail() {
   const r = current();
   $("#detail").classList.remove("notebook-detail");
   if (!r) {
-    document.body.classList.remove("reading-note");
+    document.body.classList.remove("reading-note", "has-note", "focus-mode");
+    const focusButton = $("[data-action=focus-mode]");
+    focusButton.textContent = "专注模式";
+    focusButton.setAttribute("aria-pressed", "false");
     $("#detail").innerHTML =
       `<div class="empty"><div class="empty-glyph">[ ]</div><span class="eyebrow">一本持续生长的过程笔记</span><h2>${state.records.length ? "选择笔记本，接着往下写" : "从一个想法，开始记录"}</h2><p>文字、代码、日志和图片，按你的思路排列。<br>随时追加一个单元格，继续上一次的探索。</p><button class="button primary" data-action="new-record">＋ 新建笔记本</button></div>`;
     return;
@@ -381,11 +399,31 @@ async function download(path) {
 }
 async function act(action, el) {
   switch (action) {
+    case "focus-mode":
+      document.body.classList.toggle("focus-mode");
+      el.setAttribute(
+        "aria-pressed",
+        String(document.body.classList.contains("focus-mode")),
+      );
+      el.textContent = document.body.classList.contains("focus-mode")
+        ? "退出专注"
+        : "专注模式";
+      return;
+    case "close-navigation":
+      document.body.classList.remove("navigation-open");
+      $("[data-action=navigation]").setAttribute("aria-expanded", "false");
+      return;
     case "navigation":
       document.body.classList.toggle("navigation-open");
+      el.setAttribute(
+        "aria-expanded",
+        String(document.body.classList.contains("navigation-open")),
+      );
       return;
     case "back-list":
-      document.body.classList.remove("reading-note");
+      document.body.classList.remove("reading-note", "focus-mode");
+      $("[data-action=focus-mode]").textContent = "专注模式";
+      $("[data-action=focus-mode]").setAttribute("aria-pressed", "false");
       return;
     case "new-workspace":
       return modal(
@@ -412,6 +450,7 @@ async function act(action, el) {
     case "new-record":
       return newRecord();
     case "project":
+      document.body.classList.remove("navigation-open");
       project = el.dataset.id;
       selected = "";
       dirty = false;
@@ -498,6 +537,9 @@ async function act(action, el) {
   }
 }
 document.addEventListener("click", async (event) => {
+  document.querySelectorAll(".note-menu[open]").forEach((menu) => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
   const el = event.target.closest("[data-action]");
   if (!el) return;
   if (busy) return toast("正在保存，请稍候");
@@ -630,6 +672,13 @@ document.addEventListener("submit", async (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    document
+      .querySelectorAll(".note-menu[open]")
+      .forEach((menu) => (menu.open = false));
+    document.body.classList.remove("navigation-open");
+    $("[data-action=navigation]").setAttribute("aria-expanded", "false");
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
     if (!$("#modal").open && !busy)

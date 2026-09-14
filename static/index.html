@@ -14,8 +14,14 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body class="notebook-app">
+    <button
+      class="nav-scrim"
+      data-action="close-navigation"
+      aria-label="关闭导航"
+      tabindex="-1"
+    ></button>
     <div class="workspace">
-      <aside class="sidebar" aria-label="项目导航">
+      <aside class="sidebar" id="workspace-navigation" aria-label="项目导航">
         <a class="brand" href="/" aria-label="过程簿首页"
           ><img
             class="brand-mark"
@@ -37,7 +43,7 @@
           </div>
         </div>
         <div class="side-section">
-          <span class="eyebrow">工作空间</span
+          <span class="eyebrow">项目</span
           ><button
             class="icon-button"
             data-action="new-project"
@@ -59,9 +65,7 @@
             <span>↥</span> 从备份恢复
           </button>
           <div class="local-note">
-            <span class="dot"></span> 本地工作空间<small
-              >数据保存在这台电脑上</small
-            >
+            <span class="dot"></span> 过程簿<small>持续记录，每次探索</small>
           </div>
         </div>
       </aside>
@@ -71,6 +75,8 @@
             class="button small portrait-control"
             data-action="navigation"
             aria-label="展开或收起工作空间导航"
+            aria-controls="workspace-navigation"
+            aria-expanded="false"
           >
             ☰ 工作空间</button
           ><button
@@ -80,33 +86,43 @@
             ← 返回列表
           </button>
           <div class="breadcrumb">
-            工作空间 <span>/</span> <strong id="project-label">全部记录</strong>
+            <span id="workspace-label">默认工作空间</span><span>/</span
+            ><strong id="project-label">全部记录</strong>
           </div>
-          <span id="today" class="today"></span>
-        </header>
-        <section class="page-heading">
-          <div>
-            <span class="eyebrow">每一次尝试，都有迹可循</span>
-            <h1 id="page-title">全部记录</h1>
-            <p id="page-description">
-              用文字、代码和图片，接着记录每一次探索。
-            </p>
-          </div>
-          <div class="heading-actions">
-            <button
-              id="project-settings"
-              class="button subtle"
-              data-action="project-settings"
-              hidden
+          <div class="topbar-actions">
+            <span id="today" class="today"></span
+            ><button
+              class="button small focus-control"
+              data-action="focus-mode"
+              aria-pressed="false"
             >
-              项目设置</button
-            ><button class="button primary" data-action="new-record">
-              ＋ 新建笔记本
+              专注模式
             </button>
           </div>
-        </section>
+        </header>
         <section class="workbench">
           <aside class="record-pane" aria-label="记录列表">
+            <section class="page-heading">
+              <div>
+                <span class="eyebrow">笔记库</span>
+                <h1 id="page-title">全部记录</h1>
+                <p id="page-description">
+                  用文字、代码和图片，接着记录每一次探索。
+                </p>
+              </div>
+              <div class="heading-actions">
+                <button
+                  id="project-settings"
+                  class="button subtle"
+                  data-action="project-settings"
+                  hidden
+                >
+                  项目设置</button
+                ><button class="button primary" data-action="new-record">
+                  ＋ 新建笔记本
+                </button>
+              </div>
+            </section>
             <div class="search-wrap">
               <span aria-hidden="true">⌕</span
               ><input
