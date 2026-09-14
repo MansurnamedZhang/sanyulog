@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#253e35" />
+    <meta
+      name="description"
+      content="本地 Notebook：用文字、代码、日志和图片持续记录实验与思考"
+    />
+    <title>过程簿 · Process Log</title>
+    <link rel="icon" type="image/png" href="/brand/process-log-logo.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body class="notebook-app">
+    <div class="workspace">
+      <aside class="sidebar" aria-label="项目导航">
+        <a class="brand" href="/" aria-label="过程簿首页"
+          ><img
+            class="brand-mark"
+            src="/brand/process-log-logo.png"
+            width="44"
+            height="44"
+            alt=""
+          /><span>过程簿<small>PROCESS LOG</small></span></a
+        >
+        <div class="workspace-picker">
+          <label for="workspace-select">工作空间</label
+          ><select id="workspace-select" aria-label="切换工作空间"></select>
+          <div>
+            <button class="text-button" data-action="new-workspace">
+              ＋ 新建空间</button
+            ><button class="text-button" data-action="workspace-settings">
+              设置
+            </button>
+          </div>
+        </div>
+        <div class="side-section">
+          <span class="eyebrow">工作空间</span
+          ><button
+            class="icon-button"
+            data-action="new-project"
+            title="新建项目"
+            aria-label="新建项目"
+          >
+            ＋
+          </button>
+        </div>
+        <nav id="projects"></nav>
+        <div class="side-bottom">
+          <button class="side-tool" data-action="templates">
+            <span>▧</span> 记录模板
+          </button>
+          <button class="side-tool" data-action="backup">
+            <span>↓</span> 完整备份
+          </button>
+          <button class="side-tool" data-action="restore">
+            <span>↥</span> 从备份恢复
+          </button>
+          <div class="local-note">
+            <span class="dot"></span> 本地工作空间<small
+              >数据保存在这台电脑上</small
+            >
+          </div>
+        </div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <button
+            class="button small portrait-control"
+            data-action="navigation"
+            aria-label="展开或收起工作空间导航"
+          >
+            ☰ 工作空间</button
+          ><button
+            class="button small portrait-control back-list"
+            data-action="back-list"
+          >
+            ← 返回列表
+          </button>
+          <div class="breadcrumb">
+            工作空间 <span>/</span> <strong id="project-label">全部记录</strong>
+          </div>
+          <span id="today" class="today"></span>
+        </header>
+        <section class="page-heading">
+          <div>
+            <span class="eyebrow">每一次尝试，都有迹可循</span>
+            <h1 id="page-title">全部记录</h1>
+            <p id="page-description">
+              用文字、代码和图片，接着记录每一次探索。
+            </p>
+          </div>
+          <div class="heading-actions">
+            <button
+              id="project-settings"
+              class="button subtle"
+              data-action="project-settings"
+              hidden
+            >
+              项目设置</button
+            ><button class="button primary" data-action="new-record">
+              ＋ 新建笔记本
+            </button>
+          </div>
+        </section>
+        <section class="workbench">
+          <aside class="record-pane" aria-label="记录列表">
+            <div class="search-wrap">
+              <span aria-hidden="true">⌕</span
+              ><input
+                id="search"
+                type="search"
+                placeholder="搜索内容、参数或标签"
+                aria-label="搜索记录"
+              />
+            </div>
+            <div class="filter-row">
+              <select id="status-filter" aria-label="按状态筛选">
+                <option value="">全部状态</option>
+                <option>进行中</option>
+                <option>已完成</option>
+                <option>受阻</option>
+                <option>已搁置</option></select
+              ><select id="tag-filter" aria-label="按标签筛选">
+                <option value="">全部标签</option>
+              </select>
+            </div>
+            <div class="list-caption">
+              <span>笔记本</span><span id="record-count">0 条</span>
+            </div>
+            <div id="records" class="record-list">
+              <p class="muted padded">正在读取记录…</p>
+            </div>
+          </aside>
+          <section id="detail" class="detail" aria-label="记录详情">
+            <div class="empty">
+              <div class="empty-glyph">↗</div>
+              <h2>正在打开工作空间</h2>
+              <p>读取本地记录中…</p>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <dialog id="modal">
+      <div class="modal-heading">
+        <h2 id="modal-title"></h2>
+        <button
+          class="icon-button"
+          data-action="close-modal"
+          aria-label="关闭对话框"
+        >
+          ×
+        </button>
+      </div>
+      <div id="modal-content"></div>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <input id="attachment-picker" type="file" multiple hidden />
+    <input
+      id="restore-picker"
+      type="file"
+      accept=".zip,application/zip"
+      hidden
+    />
+  </body>
+</html>

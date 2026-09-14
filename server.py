@@ -1,0 +1,195 @@
+"""Run with python server.py. Data stays beside this application."""
+import argparse
+import json
+import mimetypes
+import os
+import sqlite3
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+from store import Conflict, Store
+
+BASE = Path(__file__).resolve().parent
+
+
+class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def send(self, data, content_type='application/json; charset=utf-8', status=200, filename=None, inline=False):
+        if not isinstance(data, bytes):
+            data = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        if filename:
+            self.send_header('Content-Disposition', ('inline' if inline else 'attachment')+"; filename*=UTF-8''"+quote(filename, safe=''))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def body(self, limit=2*1024*1024):
+        length = int(self.headers.get('Content-Length', '0'))
+        if length < 0 or length > limit:
+            raise ValueError(f'请求过大，最大 {limit // (1024*1024)} MB')
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ValueError('上传不完整，请重试')
+        return data
+
+    def handle_request(self):
+        try:
+            host = self.headers.get('Host')
+            if len(self.headers.get_all('Host', [])) != 1 or host not in self.server.allowed_hosts:
+                return self.send({'error': '访问地址未获允许'}, status=403)
+            if self.command != 'GET':
+                origin = self.headers.get('Origin')
+                if (origin and (origin not in self.server.allowed_origins or urlsplit(origin).netloc != host)) or self.headers.get('Sec-Fetch-Site') == 'cross-site':
+                    return self.send({'error': '拒绝跨站修改'}, status=403)
+                if not origin and self.headers.get('X-Process-Log') != '1':
+                    return self.send({'error': '缺少本地请求标识'}, status=403)
+            u = urlsplit(self.path)
+            path = u.path
+            s = self.server.store
+            method = self.command
+            if method == 'GET':
+                static = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
+                if path in static:
+                    file = BASE / 'static' / static[path]
+                    content_type = 'text/javascript' if file.suffix in ['.js', '.mjs'] else (mimetypes.guess_type(file)[0] or 'application/octet-stream')
+                    return self.send(file.read_bytes(), content_type+'; charset=utf-8')
+                if path == '/api/health':
+                    with s.connection() as connection:
+                        connection.execute('SELECT 1').fetchone()
+                    return self.send({'ok': True})
+                if path == '/api/state':
+                    return self.send(s.state())
+                if path == '/api/backup':
+                    return self.send(s.backup(), 'application/zip', filename='process-log-backup.zip')
+                parts = path.strip('/').split('/')
+                if len(parts) == 4 and parts[:2] == ['api', 'records'] and parts[3] == 'markdown':
+                    return self.send(s.markdown(parts[2]).encode(), 'text/markdown; charset=utf-8', filename='record-'+parts[2][:8]+'.md')
+                if len(parts) == 3 and parts[:2] == ['api', 'attachments']:
+                    a, content = s.read_attachment(parts[2])
+                    preview = parse_qs(u.query).get('preview') == ['1']
+                    mime = a['mime'] if a['mime'] in ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] else 'application/octet-stream'
+                    return self.send(content, mime, filename=a['name'], inline=preview and mime != 'application/octet-stream')
+                raise KeyError('页面不存在')
+            if path == '/api/restore' and method == 'POST':
+                s.restore(self.body(250*1024*1024))
+                return self.send({'ok': True})
+            parts = path.strip('/').split('/')
+            if method == 'POST' and len(parts) == 4 and parts[:2] == ['api', 'records'] and parts[3] == 'attachments':
+                return self.send(s.add_attachment(parts[2], unquote(self.headers.get('X-Filename', 'file')),
+                                                   self.body(25*1024*1024), self.headers.get('Content-Type', 'application/octet-stream')))
+            data = {}
+            if method in ['POST', 'PUT']:
+                if self.headers.get_content_type() != 'application/json':
+                    raise ValueError('需要 JSON 格式')
+                limit = 2 * 1024 * 1024
+                if method == 'PUT' and len(parts) == 3 and parts[:2] == ['api', 'records']:
+                    # Legacy notebooks can exceed the new-document limit. Permit an
+                    # unchanged snapshot plus metadata; Store still checks growth.
+                    existing = s.get_record(parts[2])
+                    limit = max(limit, len(json.dumps(existing['cells']).encode()) + 2 * 1024 * 1024)
+                data = json.loads(self.body(limit) or b'{}')
+                if not isinstance(data, dict):
+                    raise ValueError('请求必须为 JSON 对象')
+            if path == '/api/workspaces' and method == 'POST':
+                return self.send(s.create_workspace(data))
+            if path == '/api/projects' and method == 'POST':
+                return self.send(s.create_project(data))
+            if path == '/api/records' and method == 'POST':
+                return self.send(s.create_record(data))
+            if path == '/api/templates' and method == 'PUT':
+                s.save_templates(data.get('templates'))
+                return self.send({'ok': True})
+            if len(parts) == 3 and parts[0] == 'api':
+                entity, identifier = parts[1:]
+                if method == 'PUT':
+                    operation = {'workspaces': s.update_workspace, 'projects': s.update_project, 'records': s.update_record, 'entries': s.update_entry}.get(entity)
+                    if operation:
+                        return self.send(operation(identifier, data) or {'ok': True})
+                if method == 'DELETE':
+                    operation = {'workspaces': s.delete_workspace, 'projects': s.delete_project, 'records': s.delete_record, 'entries': s.delete_entry, 'attachments': s.delete_attachment}.get(entity)
+                    if operation:
+                        operation(identifier)
+                        return self.send({'ok': True})
+            if len(parts) == 4 and parts[:2] == ['api', 'records'] and method == 'POST':
+                if parts[3] == 'entries':
+                    return self.send(s.add_entry(parts[2], data))
+                if parts[3] == 'duplicate':
+                    return self.send(s.duplicate(parts[2]))
+            raise KeyError('接口不存在')
+        except Conflict as e:
+            self.send({'error': str(e)}, status=409)
+        except KeyError as e:
+            self.send({'error': str(e).strip("'")}, status=404)
+        except (ValueError, TypeError, AttributeError, sqlite3.IntegrityError) as e:
+            self.send({'error': str(e)}, status=400)
+        except (ConnectionError, TimeoutError):
+            pass
+        except Exception as e:
+            print(f'Error: {type(e).__name__}: {e}', file=sys.stderr, flush=True)
+            self.send({'error': '保存或读取失败，请检查磁盘空间后重试。当前输入不会清空。'}, status=500)
+
+    do_GET = handle_request
+    do_POST = handle_request
+    do_PUT = handle_request
+    do_DELETE = handle_request
+
+
+def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, database_url=None, attachments_dir=None):
+    origins = set(allowed_origins or [])
+    for origin in origins:
+        parsed = urlsplit(origin)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password
+                or parsed.path or parsed.query or parsed.fragment or '*' in parsed.netloc
+                or any(character.isspace() for character in origin)):
+            raise ValueError('访问来源必须为完整的 http(s)://主机[:端口]，不能包含路径或通配符')
+        parsed.port  # Reject malformed port values before binding a socket.
+    server = ThreadingHTTPServer((host, port), Handler)
+    origins.update({f'http://127.0.0.1:{server.server_port}', f'http://localhost:{server.server_port}'})
+    server.allowed_origins = origins
+    server.allowed_hosts = {urlsplit(origin).netloc for origin in origins}
+    try:
+        if database_url:
+            from pgstore import PostgreSQLStore
+            server.store = PostgreSQLStore(root, database_url, attachments_dir)
+        else:
+            server.store = Store(root)
+    except Exception:
+        server.server_close()
+        raise
+    return server
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='过程记录工具')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('PROCESS_LOG_PORT', '8765')))
+    parser.add_argument('--host', default=os.environ.get('PROCESS_LOG_HOST', '127.0.0.1'))
+    parser.add_argument('--allow-origin', action='append', default=None)
+    parser.add_argument('--data', default=os.environ.get('PROCESS_LOG_DATA', str(BASE / 'data')))
+    args = parser.parse_args()
+    origins = args.allow_origin if args.allow_origin is not None else [x.strip() for x in os.environ.get('PROCESS_LOG_ALLOWED_ORIGINS', '').split(',') if x.strip()]
+    try:
+        httpd = make_server(args.data, args.port, host=args.host, allowed_origins=origins,
+                            database_url=os.environ.get('DATABASE_URL'), attachments_dir=os.environ.get('PROCESS_LOG_ATTACHMENTS'))
+    except OSError as e:
+        raise SystemExit(f'Cannot start: {e}. Try --port 8766.')
+    print(f'Process Log listening on {args.host}:{httpd.server_port}', flush=True)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
