@@ -11,6 +11,7 @@
     <title>过程簿 · Process Log</title>
     <link rel="icon" type="image/png" href="/brand/process-log-logo.png" />
     <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/login.css" />
     <script type="module" src="/app.js"></script>
   </head>
   <body class="notebook-app">
@@ -63,6 +64,21 @@
           </button>
           <button class="side-tool" data-action="restore">
             <span>↥</span> 从备份恢复
+          </button>
+          <button
+            class="side-tool"
+            data-auth-control
+            data-action="change-password"
+            hidden
+          >
+            修改密码</button
+          ><button
+            class="side-tool"
+            data-auth-control
+            data-action="logout"
+            hidden
+          >
+            退出登录
           </button>
           <div class="local-note">
             <span class="dot"></span> 过程簿<small>持续记录，每次探索</small>

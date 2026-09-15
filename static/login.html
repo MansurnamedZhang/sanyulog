@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录 · 过程簿</title>
+    <link rel="icon" href="/brand/process-log-logo.png" />
+    <link rel="stylesheet" href="/login.css" />
+    <script type="module" src="/auth-ui.js"></script>
+  </head>
+  <body class="auth-page">
+    <main class="auth-card">
+      <img
+        class="auth-logo"
+        src="/brand/process-log-logo.png"
+        width="60"
+        height="60"
+        alt=""
+      />
+      <p class="auth-eyebrow">PROCESS LOG</p>
+      <h1>回到你的记录</h1>
+      <p class="auth-description">登录过程簿，继续每一次探索。</p>
+      <form id="login-form">
+        <label
+          >账号<input
+            name="username"
+            autocomplete="username"
+            maxlength="64"
+            required
+            autofocus /></label
+        ><label
+          >密码<input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            maxlength="256"
+            required
+        /></label>
+        <p class="auth-error" role="alert"></p>
+        <button type="submit">登录</button>
+        <p class="auth-hint" data-session-hint>此设备 7 天内免重复登录</p>
+      </form>
+    </main>
+  </body>
+</html>

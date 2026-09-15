@@ -1,3 +1,4 @@
+import { changePassword, notifyLogout } from "./auth-ui.js";
 import { newId } from "./notebook-core.mjs";
 import { Notebook } from "./notebook.js";
 const $ = (s, root = document) => root.querySelector(s);
@@ -479,6 +480,23 @@ async function act(action, el) {
       return compare();
     case "export":
       return download("/records/" + selected + "/markdown");
+    case "logout":
+      if (dirty) throw new Error("请先保存当前未提交的修改再退出登录");
+      await notebook?.flush();
+      await api("/auth/logout", "POST", {});
+      try {
+        for (const key of Object.keys(localStorage)) {
+          if (/^process-log:(draft|entry|notebook):/.test(key))
+            localStorage.removeItem(key);
+        }
+      } finally {
+        notifyLogout();
+        location.replace("/");
+      }
+      return;
+    case "change-password":
+      await notebook?.flush();
+      return changePassword();
     case "backup":
       return download("/backup");
     case "restore":
@@ -733,6 +751,9 @@ $("#today").textContent = new Date().toLocaleDateString("zh-CN", {
   month: "long",
   day: "numeric",
   weekday: "long",
+});
+window.addEventListener("auth-restored", () => {
+  if (!notebook) refresh().catch((e) => toast(e.message, true));
 });
 refresh().catch((e) => {
   toast(e.message, true);

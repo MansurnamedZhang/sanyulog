@@ -49,8 +49,63 @@ const assert = require("node:assert/strict");
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("http://127.0.0.1:" + port);
+    assert.equal(
+      (
+        await page.request.get("http://127.0.0.1:" + port + "/api/state")
+      ).status(),
+      401,
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('#login-form [name="username"]').fill("admin");
+    await page
+      .locator('#login-form [name="password"]')
+      .fill("ui-test-password-only");
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    if (process.env.UI_AUTH_CAPTURE)
+      await page.screenshot({ path: process.env.UI_AUTH_CAPTURE });
+    await page.locator("#login-form button").click();
+    await page.locator(".workspace").waitFor();
+    const sessionCookie = (await page.context().cookies()).find(
+      (c) => c.name === "process_log_session",
+    );
+    assert(sessionCookie.httpOnly && sessionCookie.sameSite === "Strict");
+    assert(sessionCookie.expires > Date.now() / 1000 + 6 * 86400);
+    await page.reload();
+    await page.locator(".workspace").waitFor();
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("[data-action=select]").first().click();
     await page.locator(".nb-title").waitFor();
+    const firstDraftCell = page.locator(".nb-cell").first();
+    const draftArea = firstDraftCell.locator("[data-source]");
+    if (!(await draftArea.isVisible()))
+      await firstDraftCell.locator('[data-nb="toggle"]').click();
+    const beforeExpiry = await draftArea.inputValue();
+    await page.request.post("http://127.0.0.1:" + port + "/api/auth/logout", {
+      data: {},
+      headers: { "X-Process-Log": "1" },
+    });
+    await draftArea.fill(beforeExpiry + "\n\n登录过期测试草稿");
+    await page.locator("#reauth-form").waitFor();
+
+    await page.locator('#reauth-form [name="username"]').fill("admin");
+    await page
+      .locator('#reauth-form [name="password"]')
+      .fill("ui-test-password-only");
+    await page.locator("#reauth-form button").click();
+    await page.locator("#reauth-form").waitFor({ state: "hidden" });
+    if (!(await draftArea.isVisible()))
+      await firstDraftCell.locator('[data-nb="toggle"]').click();
+    assert.equal(
+      await draftArea.inputValue(),
+      beforeExpiry + "\n\n登录过期测试草稿",
+    );
+    await page.locator('[data-nb="save"]').click();
+    await page.locator("[data-save-error]").waitFor({ state: "hidden" });
+    await firstDraftCell.locator('[data-nb="toggle"]').click();
     const popupPromise = page.waitForEvent("popup");
     await page.locator('[data-nb="export-image"]').first().click();
     const exported = await popupPromise;
@@ -183,9 +238,45 @@ const assert = require("node:assert/strict");
     await page.locator("#detail").evaluate((e) => (e.scrollTop = 0));
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('[data-action="change-password"]').click();
+    const passwordForm = page
+      .locator(".auth-dialog form")
+      .filter({ has: page.locator('[name="new_password"]') });
+    await passwordForm
+      .locator('[name="password"]')
+      .fill("ui-test-password-only");
+    await passwordForm
+      .locator('[name="new_password"]')
+      .fill("ui-new-password-only");
+    await passwordForm
+      .locator('[name="confirm_password"]')
+      .fill("ui-new-password-only");
+    await passwordForm.locator('[type="submit"]').click();
+    await page.locator("#reauth-form").waitFor();
+    assert.equal(
+      (
+        await page.request.get("http://127.0.0.1:" + port + "/api/state")
+      ).status(),
+      401,
+    );
+    await page.locator('#reauth-form [name="username"]').fill("admin");
+    await page
+      .locator('#reauth-form [name="password"]')
+      .fill("ui-new-password-only");
+    await page.locator("#reauth-form button").click();
+    await page.locator("#reauth-form").waitFor({ state: "hidden" });
+    await page.locator('[data-action="logout"]').click();
+    await page.locator("#login-form").waitFor();
+    assert.equal(
+      (
+        await page.request.get("http://127.0.0.1:" + port + "/api/state")
+      ).status(),
+      401,
+    );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: 6 viewport widths; focus mode; menus; Markdown selection, lists and auto-preview; mobile navigation; workspace switch; table overflow; no JS page errors.",
+      "PASS: login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and auto-preview; mobile navigation; workspace switch; table overflow; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

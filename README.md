@@ -1,14 +1,17 @@
 # 过程簿 · Process Log
 
-个人使用的本地过程记录工具。适合 LoRA 训练、工作流调试、软件排错和日常研究。中文界面，无需账号；默认本机 SQLite 模式无需联网及第三方依赖。PostgreSQL 模式需要 requirements.txt 中的驱动。
+个人使用的本地过程记录工具。适合 LoRA 训练、工作流调试、软件排错和日常研究。中文界面，支持管理员登录、7 天免重复登录和服务器加密保存。默认使用 SQLite，也支持 PostgreSQL。运行前需安装 requirements.txt 中的依赖。
 
 ## 启动
 
-Windows 双击 `start.cmd`，保持启动窗口运行，然后打开 <http://127.0.0.1:8765>。
+首次运行先安装依赖并初始化账号；完成后可双击 `start.cmd` 启动。本机 HTTP 需按下面设置 Cookie 兼容模式，服务器推荐 HTTPS。
 
 也可以在此目录运行：
 
 ```powershell
+python -m pip install -r requirements.txt
+python auth.py --db data/auth.db --username admin
+$env:PROCESS_LOG_COOKIE_SECURE = "0" # 仅本机 HTTP；HTTPS 保持默认值 1
 python server.py
 ```
 
@@ -125,3 +128,5 @@ PostgreSQL 测试需提供专用、可清空的 `PROCESS_LOG_TEST_DATABASE_URL`�
 桌面按导航、笔记库、编辑区排列，每栏独立滚动。笔记列表中的搜索和新建入口固定在列表上方。打开笔记后可在顶栏开启“专注模式”扩大编辑区；低频操作位于“更多操作”。Markdown 预览隐藏格式栏，点击正文或“编辑”展开。窄屏使用抽屉导航和单列笔记视图；“返回列表”也会退出专注模式。
 
 服务器托管加密：见 [密钥配置、迁移与恢复](docs/server-encryption.md)。
+
+账号初始化、HTTPS、会话有效期与密码重置：见 [登录系统配置](docs/authentication.md)。

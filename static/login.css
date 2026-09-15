@@ -1,0 +1,126 @@
+.auth-page {
+  margin: 0;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: #f4f5ef;
+  color: #243e34;
+  font:
+    16px/1.6 system-ui,
+    "Microsoft YaHei",
+    sans-serif;
+}
+.auth-card,
+.auth-dialog {
+  box-sizing: border-box;
+  width: min(100%, 420px);
+  padding: 36px;
+  border: 1px solid #dce2d5;
+  border-radius: 20px;
+  background: #fffefa;
+  color: #243e34;
+  box-shadow: 0 16px 60px #243e3410;
+  font:
+    16px/1.6 system-ui,
+    "Microsoft YaHei",
+    sans-serif;
+}
+.auth-dialog {
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  width: min(calc(100% - 32px), 420px);
+}
+.auth-dialog::backdrop {
+  background: #f4f5eff5;
+}
+.auth-logo {
+  display: block;
+  object-fit: contain;
+  margin-bottom: 16px;
+}
+.auth-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #758270;
+}
+.auth-card h1,
+.auth-dialog h2 {
+  margin: 8px 0;
+  font-size: 26px;
+}
+.auth-description,
+.auth-hint {
+  color: #697965;
+  font-size: 14px;
+}
+.auth-card label,
+.auth-dialog label {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+  font-size: 14px;
+}
+.auth-card input,
+.auth-dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  border: 1px solid #cbd5c2;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: white;
+  font: inherit;
+  color: inherit;
+}
+.auth-card input:focus,
+.auth-dialog input:focus {
+  outline: 2px solid #789965;
+  outline-offset: 2px;
+}
+.auth-card button,
+.auth-dialog button {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #2f503e;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+.auth-card button:disabled,
+.auth-dialog button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.auth-dialog .auth-cancel {
+  background: transparent;
+  color: #52604b;
+  margin-top: 8px;
+}
+.auth-error {
+  min-height: 1.5em;
+  color: #a5372c;
+  font-size: 14px;
+}
+.auth-hint {
+  text-align: center;
+  margin: 12px 0 0;
+}
+.auth-locked .workspace,
+.auth-locked body:not(.auth-page) > main,
+.auth-locked body:not(.auth-page) > header {
+  visibility: hidden;
+}
+@media (max-width: 400px) {
+  .auth-page {
+    padding: 16px;
+  }
+  .auth-card,
+  .auth-dialog {
+    padding: 24px;
+  }
+}

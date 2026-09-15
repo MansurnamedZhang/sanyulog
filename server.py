@@ -1,10 +1,13 @@
 """Run with python server.py. Data stays beside this application."""
 import argparse
+import ipaddress
 import json
 import mimetypes
 import os
 import sqlite3
 import sys
+from http.cookies import SimpleCookie, CookieError
+from auth import Auth, RateLimited
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -22,7 +25,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def send(self, data, content_type='application/json; charset=utf-8', status=200, filename=None, inline=False):
+    def send(self, data, content_type='application/json; charset=utf-8', status=200, filename=None, inline=False, cookie=None):
         if not isinstance(data, bytes):
             data = json.dumps(data, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -32,6 +35,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        if cookie:
+            self.send_header('Set-Cookie', cookie)
         if filename:
             self.send_header('Content-Disposition', ('inline' if inline else 'attachment')+"; filename*=UTF-8''"+quote(filename, safe=''))
         self.end_headers()
@@ -45,6 +50,32 @@ class Handler(BaseHTTPRequestHandler):
         if len(data) != length:
             raise ValueError('上传不完整，请重试')
         return data
+
+    def auth_peer(self):
+        peer = str(ipaddress.ip_address(self.client_address[0]))
+        if peer not in self.server.trusted_proxies:
+            return peer
+        forwarded = self.headers.get('X-Forwarded-For', '')
+        if len(forwarded) > 1024: return peer
+        try:
+            chain = [str(ipaddress.ip_address(value.strip())) for value in forwarded.split(',')]
+        except ValueError:
+            return peer
+        for address in reversed(chain):
+            if address not in self.server.trusted_proxies: return address
+        return peer
+
+    def session_token(self):
+        try:
+            cookie = SimpleCookie(self.headers.get('Cookie', ''))
+            return cookie['process_log_session'].value if 'process_log_session' in cookie else ''
+        except CookieError:
+            return ''
+
+    def session_cookie(self, token=''):
+        age = self.server.auth.seconds if token else 0
+        secure = '; Secure' if self.server.cookie_secure else ''
+        return f'process_log_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{secure}'
 
     def handle_request(self):
         try:
@@ -61,8 +92,37 @@ class Handler(BaseHTTPRequestHandler):
             path = u.path
             s = self.server.store
             method = self.command
+            auth = self.server.auth
+            token = self.session_token()
+            if path == '/api/auth/status' and method == 'GET':
+                username = auth.user(token) if auth else None
+                return self.send({'enabled': bool(auth), 'authenticated': bool(username), 'username': username,
+                                  'days': auth.seconds // 86400 if auth else None})
+            if path == '/api/auth/login' and method == 'POST' and auth:
+                if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
+                data = json.loads(self.body(4096))
+                if not isinstance(data, dict): raise ValueError('请求必须为对象')
+                new_token = auth.login(data.get('username'), data.get('password'), self.auth_peer())
+                if not new_token: return self.send({'error': '用户名或密码错误'}, status=401)
+                return self.send({'ok': True}, cookie=self.session_cookie(new_token))
+            if path == '/api/auth/logout' and method == 'POST' and auth:
+                auth.logout(token)
+                return self.send({'ok': True}, cookie=self.session_cookie())
+            username = auth.user(token) if auth else None
+            if auth and not username:
+                if path.startswith('/api/') and path != '/api/health':
+                    return self.send({'error': '请登录后继续，当前输入仍保留在页面中'}, status=401)
+                if method == 'GET' and path in ('/', '/cell-export.html'):
+                    return self.send((BASE / 'static' / 'login.html').read_bytes(), 'text/html; charset=utf-8')
+            if path == '/api/auth/password' and method == 'POST' and auth:
+                if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
+                data = json.loads(self.body(4096))
+                if not isinstance(data, dict): raise ValueError('请求必须为对象')
+                if not auth.change_password(token, data.get('password'), data.get('new_password'), self.auth_peer()):
+                    return self.send({'error': '当前密码错误或登录已过期'}, status=401)
+                return self.send({'ok': True}, cookie=self.session_cookie())
             if method == 'GET':
-                static = {'/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
+                static = {'/auth-ui.js': 'auth-ui.js', '/login.css': 'login.css', '/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
                 if path in static:
                     file = BASE / 'static' / static[path]
                     content_type = 'text/javascript' if file.suffix in ['.js', '.mjs'] else (mimetypes.guess_type(file)[0] or 'application/octet-stream')
@@ -131,6 +191,8 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[3] == 'duplicate':
                     return self.send(s.duplicate(parts[2]))
             raise KeyError('接口不存在')
+        except RateLimited as e:
+            self.send({'error': str(e)}, status=429)
         except Conflict as e:
             self.send({'error': str(e)}, status=409)
         except KeyError as e:
@@ -149,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = handle_request
 
 
-def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, database_url=None, attachments_dir=None, encryption_key_file=None):
+def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, database_url=None, attachments_dir=None, encryption_key_file=None, auth_db=None, session_days=7, cookie_secure=True, trusted_proxies=None):
     origins = set(allowed_origins or [])
     for origin in origins:
         parsed = urlsplit(origin)
@@ -163,6 +225,9 @@ def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, data
     server.allowed_origins = origins
     server.allowed_hosts = {urlsplit(origin).netloc for origin in origins}
     try:
+        server.auth = Auth(auth_db, session_days) if auth_db else None
+        server.cookie_secure = cookie_secure
+        server.trusted_proxies = {str(ipaddress.ip_address(value)) for value in (trusted_proxies or [])}
         if database_url:
             from pgstore import PostgreSQLStore
             server.store = PostgreSQLStore(root, database_url, attachments_dir, encryption_key_file)
@@ -185,7 +250,13 @@ if __name__ == '__main__':
     try:
         httpd = make_server(args.data, args.port, host=args.host, allowed_origins=origins,
                             database_url=os.environ.get('DATABASE_URL'), attachments_dir=os.environ.get('PROCESS_LOG_ATTACHMENTS'),
-                            encryption_key_file=os.environ.get('PROCESS_LOG_ENCRYPTION_KEY_FILE'))
+                            encryption_key_file=os.environ.get('PROCESS_LOG_ENCRYPTION_KEY_FILE'),
+                            auth_db=(os.environ.get('PROCESS_LOG_AUTH_DB') or str(Path(args.data) / 'auth.db')) if os.environ.get('PROCESS_LOG_AUTH_ENABLED', '1') != '0' else None,
+                            session_days=int(os.environ.get('PROCESS_LOG_SESSION_DAYS', '7')),
+                            cookie_secure=os.environ.get('PROCESS_LOG_COOKIE_SECURE', '1') != '0',
+                            trusted_proxies=[v.strip() for v in os.environ.get('PROCESS_LOG_TRUSTED_PROXIES', '').split(',') if v.strip()])
+    except (ValueError, sqlite3.Error) as e:
+        raise SystemExit(f'Cannot start: {e}')
     except OSError as e:
         raise SystemExit(f'Cannot start: {e}. Try --port 8766.')
     print(f'Process Log listening on {args.host}:{httpd.server_port}', flush=True)

@@ -4,7 +4,7 @@
 
 - Python 3.12+：运行服务和后端测试。
 - Node.js 22+：前端检查、测试和格式化；运行应用无需 Node.js。
-- PostgreSQL 驱动仅在使用该后端时需要：`python -m pip install -r requirements.txt`。
+- 安装后端依赖（包括存储加密库与 PostgreSQL 驱动）：`python -m pip install -r requirements.txt`。
 
 ## 目录职责
 
