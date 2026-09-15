@@ -1,4 +1,5 @@
-"""Local transactional storage. No third-party dependencies."""
+"""Transactional SQLite storage with optional server-managed encryption."""
+from storage_crypto import StorageCipher, COLUMNS
 import hashlib
 import csv
 import io
@@ -57,7 +58,8 @@ SCHEMA = V1_SCHEMA + NOTEBOOK_SCHEMA
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, encryption_key_file=None):
+        self.cipher = StorageCipher(encryption_key_file)
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.files = self.root / 'attachments'
@@ -73,10 +75,65 @@ class Store:
                 backups.mkdir(exist_ok=True)
                 (backups / ('before-notebook-'+uid()+'.zip')).write_bytes(self.backup())
             c.executescript(SCHEMA)
-            c.execute('INSERT OR IGNORE INTO settings VALUES (?,?)', ('templates', json.dumps(DEFAULT_TEMPLATES, ensure_ascii=False)))
+            self.cipher.configure(c)
+            c.execute('INSERT OR IGNORE INTO settings VALUES (?,?)', ('templates', self.cipher.seal(json.dumps(DEFAULT_TEMPLATES, ensure_ascii=False), "value")))
             self.migrate_notebooks(c)
+            migrated = self.migrate_encryption(c)
+        self.encrypt_attachment_files()
+        if migrated:
+            with self.connection() as c:
+                c.execute("VACUUM")
 
-    def migrate_notebooks(self, c):
+    def migrate_encryption(self, c, cipher=None):
+        cipher = cipher or self.cipher
+        if cipher.columns_encrypted or cipher.aes is None:
+            return False
+        # Read legacy values as literal text before switching to envelope decoding.
+        pending = [(table, identifier, columns, c.execute('SELECT '+identifier+','+','.join(columns)+' FROM '+table).fetchall())
+                   for table, (identifier, columns) in COLUMNS.items()]
+        cipher.columns_encrypted = True
+        for table, identifier, columns, rows in pending:
+            for row in rows:
+                c.execute('UPDATE '+table+' SET '+','.join(column+'=?' for column in columns)+' WHERE '+identifier+'=?',
+                          tuple(cipher.seal(row[column], column) for column in columns)+(row[identifier],))
+        c.execute('INSERT INTO settings VALUES (?,?)', ('encryption-check', cipher.seal('process-log-storage-v1', 'value')))
+        return True
+
+    def decode_attachment(self, content, filename):
+        if hashlib.sha256(content).hexdigest() == filename:
+            return content
+        decoded = self.cipher.decrypt(content, 'attachment:'+filename)
+        if hashlib.sha256(decoded).hexdigest() != filename:
+            raise ValueError('附件校验失败')
+        return decoded
+
+    def write_attachment_bytes(self, path, content):
+        fd, temporary = tempfile.mkstemp(prefix='.encrypt-', dir=self.files)
+        try:
+            with os.fdopen(fd, 'wb') as target:
+                target.write(content)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+    def encrypt_attachment_files(self):
+        if self.cipher.aes is None:
+            return
+        # Atomic per-file conversion is restartable after interrupted migrations.
+        with self.connection() as c:
+            names = [row[0] for row in c.execute('SELECT DISTINCT file FROM attachments')]
+        names = set(names) | {p.name for p in self.files.iterdir() if p.is_file() and len(p.name) == 64 and all(ch in '0123456789abcdef' for ch in p.name)}
+        for name in names:
+            path = self.files / name
+            content = path.read_bytes()
+            decoded = self.decode_attachment(content, name)
+            if decoded == content and self.cipher.aes is not None:
+                self.write_attachment_bytes(path, self.cipher.encrypt(content, 'attachment:'+name))
+
+    def migrate_notebooks(self, c, cipher=None):
+        cipher = cipher or self.cipher
         for row in c.execute('SELECT id FROM records WHERE id NOT IN (SELECT record_id FROM notebooks)').fetchall():
             record_id = row[0]
             cells = [dict(id=e[0], type='markdown', source='### '+e[1]+'\n\n'+e[2], language='', attachment_ids=[])
@@ -84,7 +141,7 @@ class Store:
             files = [a[0] for a in c.execute('SELECT id FROM attachments WHERE record_id=? ORDER BY created,rowid', (record_id,))]
             if files:
                 cells.append(dict(id=uid(), type='file', source='', language='', attachment_ids=files))
-            c.execute('INSERT INTO notebooks VALUES (?,?)', (record_id, json.dumps(cells, ensure_ascii=False)))
+            c.execute('INSERT INTO notebooks VALUES (?,?)', (record_id, cipher.seal(json.dumps(cells, ensure_ascii=False), "cells")))
 
     def validate_cells(self, c, record_id, cells, previous=None, restoring=False):
         if not isinstance(cells, list):
@@ -124,8 +181,9 @@ class Store:
     def connection(self):
         with self.lock:
             c = sqlite3.connect(self.db, timeout=20)
-            c.row_factory = sqlite3.Row
+            c.row_factory = self.cipher.sqlite_row
             c.execute('PRAGMA foreign_keys=ON')
+            c.execute('PRAGMA secure_delete=ON')
             try:
                 with c:
                     yield c
@@ -152,7 +210,7 @@ class Store:
 
     def save_workspace_data(self, c, value):
         c.execute("INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                  ('workspaces', json.dumps(value, ensure_ascii=False)))
+                  ('workspaces', self.cipher.seal(json.dumps(value, ensure_ascii=False), "value")))
 
     def create_workspace(self, data):
         with self.connection() as c:
@@ -206,13 +264,13 @@ class Store:
     def create_project(self, data):
         p = {'id': uid(), 'name': self.required(data.get('name'), '项目名称', 100), 'created': now()}
         with self.connection() as c:
-            c.execute('INSERT INTO projects VALUES (:id,:name,:created)', p)
+            c.execute('INSERT INTO projects VALUES (:id,:name,:created)', self.cipher.mapping(p))
             self.assign_workspace(c, p['id'], data.get('workspace_id', 'default'))
         return p
 
     def update_project(self, project_id, data):
         with self.connection() as c:
-            if c.execute('UPDATE projects SET name=? WHERE id=?', (self.required(data.get('name'), '项目名称', 100), project_id)).rowcount == 0:
+            if c.execute('UPDATE projects SET name=? WHERE id=?', (self.cipher.seal(self.required(data.get('name'), '项目名称', 100), 'name'), project_id)).rowcount == 0:
                 raise KeyError('项目不存在')
             if 'workspace_id' in data:
                 self.assign_workspace(c, project_id, data['workspace_id'])
@@ -250,10 +308,10 @@ class Store:
         with self.connection() as c:
             self.validate_record(c, d)
             dbd = {**d, 'params': json.dumps(d['params'], ensure_ascii=False), 'tags': json.dumps(d['tags'], ensure_ascii=False)}
-            c.execute('INSERT INTO records VALUES (:id,:project_id,:title,:status,:goal,:params,:tags,:result,:conclusion,:next_step,:related_id,:created,:updated,:version)', dbd)
+            c.execute('INSERT INTO records VALUES (:id,:project_id,:title,:status,:goal,:params,:tags,:result,:conclusion,:next_step,:related_id,:created,:updated,:version)', self.cipher.mapping(dbd))
             cells = data.get('cells', [])
             self.validate_cells(c, d['id'], cells)
-            c.execute('INSERT INTO notebooks VALUES (?,?)', (d['id'], json.dumps(cells, ensure_ascii=False)))
+            c.execute('INSERT INTO notebooks VALUES (?,?)', (d['id'], self.cipher.seal(json.dumps(cells, ensure_ascii=False), "cells")))
         return self.get_record(d['id'])
 
     def update_record(self, record_id, data):
@@ -268,11 +326,11 @@ class Store:
             self.validate_record(c, d)
             if 'cells' in data:
                 self.validate_cells(c, record_id, data['cells'], previous=d['cells'])
-                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (json.dumps(data['cells'], ensure_ascii=False), record_id))
+                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (self.cipher.seal(json.dumps(data['cells'], ensure_ascii=False), "cells"), record_id))
             d['version'] += 1
             d['updated'] = now()
             d['params'], d['tags'] = json.dumps(d['params'], ensure_ascii=False), json.dumps(d['tags'], ensure_ascii=False)
-            c.execute('UPDATE records SET '+','.join(k+'=:'+k for k in fields+['version', 'updated'])+' WHERE id=:id', d)
+            c.execute('UPDATE records SET '+','.join(k+'=:'+k for k in fields+['version', 'updated'])+' WHERE id=:id', self.cipher.mapping(d))
         return self.get_record(record_id)
 
     def duplicate(self, record_id):
@@ -292,10 +350,10 @@ class Store:
         if d['kind'] not in ['操作', '观察', '问题', '结论']:
             raise ValueError('无效的时间线类型')
         with self.connection() as c:
-            c.execute('INSERT INTO entries VALUES (:id,:record_id,:kind,:body,:created)', d)
+            c.execute('INSERT INTO entries VALUES (:id,:record_id,:kind,:body,:created)', self.cipher.mapping(d))
             cells = json.loads(c.execute('SELECT cells FROM notebooks WHERE record_id=?', (record_id,)).fetchone()[0])
             cells.append(dict(id=d['id'], type='markdown', source='### '+d['kind']+'\n\n'+d['body'], language='', attachment_ids=[]))
-            c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (json.dumps(cells, ensure_ascii=False), record_id))
+            c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (self.cipher.seal(json.dumps(cells, ensure_ascii=False), "cells"), record_id))
             c.execute('UPDATE records SET updated=?,version=version+1 WHERE id=?', (now(), record_id))
         return d
 
@@ -304,13 +362,13 @@ class Store:
             e = c.execute('SELECT record_id,kind FROM entries WHERE id=?', (entry_id,)).fetchone()
             if e is None:
                 raise KeyError('时间线记录不存在')
-            if not c.execute('UPDATE entries SET body=? WHERE id=?', (self.required(data.get('body'), '记录内容', 100000, trim=False), entry_id)).rowcount:
+            if not c.execute('UPDATE entries SET body=? WHERE id=?', (self.cipher.seal(self.required(data.get('body'), '记录内容', 100000, trim=False), 'body'), entry_id)).rowcount:
                 raise KeyError('时间线记录不存在')
             cells = json.loads(c.execute('SELECT cells FROM notebooks WHERE record_id=?', (e[0],)).fetchone()[0])
             for cell in cells:
                 if cell['id'] == entry_id:
                     cell['source'] = '### '+e[1]+'\n\n'+data['body']
-            c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (json.dumps(cells, ensure_ascii=False), e[0]))
+            c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (self.cipher.seal(json.dumps(cells, ensure_ascii=False), "cells"), e[0]))
             c.execute('UPDATE records SET updated=?,version=version+1 WHERE id=?', (now(), e[0]))
 
     def delete_entry(self, entry_id):
@@ -319,7 +377,7 @@ class Store:
             if e:
                 cells = json.loads(c.execute('SELECT cells FROM notebooks WHERE record_id=?', (e[0],)).fetchone()[0])
                 cells = [cell for cell in cells if cell['id'] != entry_id]
-                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (json.dumps(cells, ensure_ascii=False), e[0]))
+                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (self.cipher.seal(json.dumps(cells, ensure_ascii=False), "cells"), e[0]))
                 c.execute('UPDATE records SET updated=?,version=version+1 WHERE id=?', (now(), e[0]))
             c.execute('DELETE FROM entries WHERE id=?', (entry_id,))
 
@@ -335,11 +393,17 @@ class Store:
             safe_name = self.required(name.replace('\\', '/').split('/')[-1], '文件名', 240)
             filename = hashlib.sha256(content).hexdigest()
             path = self.files / filename
-            if not path.exists():
-                path.write_bytes(content)
+            if path.exists():
+                existing = path.read_bytes()
+                if self.decode_attachment(existing, filename) != content:
+                    raise ValueError('已有附件损坏，拒绝覆盖')
+                if self.cipher.aes is not None and existing == content:
+                    self.write_attachment_bytes(path, self.cipher.encrypt(content, 'attachment:'+filename))
+            else:
+                self.write_attachment_bytes(path, self.cipher.encrypt(content, 'attachment:'+filename))
             d = dict(id=uid(), record_id=record_id, name=safe_name, mime=str(mime)[:100], size=len(content), file=filename, created=now())
             with self.connection() as c:
-                c.execute('INSERT INTO attachments VALUES (:id,:record_id,:name,:mime,:size,:file,:created)', d)
+                c.execute('INSERT INTO attachments VALUES (:id,:record_id,:name,:mime,:size,:file,:created)', self.cipher.mapping(d))
             return d
 
     def read_attachment(self, attachment_id):
@@ -347,7 +411,7 @@ class Store:
             row = c.execute('SELECT * FROM attachments WHERE id=?', (attachment_id,)).fetchone()
             if row is None:
                 raise KeyError('附件不存在')
-            return dict(row), (self.files / row['file']).read_bytes()
+            return dict(row), self.decode_attachment((self.files / row['file']).read_bytes(), row['file'])
 
     def delete_attachment(self, attachment_id):
         with self.connection() as c:
@@ -356,7 +420,7 @@ class Store:
                 cells = json.loads(c.execute('SELECT cells FROM notebooks WHERE record_id=?', (row[0],)).fetchone()[0])
                 for cell in cells:
                     cell['attachment_ids'] = [a for a in cell['attachment_ids'] if a != attachment_id]
-                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (json.dumps(cells, ensure_ascii=False), row[0]))
+                c.execute('UPDATE notebooks SET cells=? WHERE record_id=?', (self.cipher.seal(json.dumps(cells, ensure_ascii=False), "cells"), row[0]))
                 c.execute('UPDATE records SET updated=?,version=version+1 WHERE id=?', (now(), row[0]))
             c.execute('DELETE FROM attachments WHERE id=?', (attachment_id,))
 
@@ -377,7 +441,7 @@ class Store:
     def save_templates(self, templates):
         self.validate_templates(templates)
         with self.connection() as c:
-            c.execute("UPDATE settings SET value=? WHERE key='templates'", (json.dumps(templates, ensure_ascii=False),))
+            c.execute("UPDATE settings SET value=? WHERE key='templates'", (self.cipher.seal(json.dumps(templates, ensure_ascii=False), "value"),))
 
     def markdown(self, record_id):
         r = self.get_record(record_id)
@@ -423,12 +487,12 @@ class Store:
                 z.write(self.db, 'process.db')
                 for filename in filenames:
                     z.write(self.files / filename, 'attachments/'+filename)
-            return out.getvalue()
+            return self.cipher.encrypt(out.getvalue(), 'backup')
 
     def restore(self, content):
         with self.lock:
             try:
-                with zipfile.ZipFile(io.BytesIO(content)) as z:
+                with zipfile.ZipFile(io.BytesIO(self.cipher.decrypt(content, 'backup'))) as z:
                     names = z.namelist()
                     if len(names) != len(set(names)) or 'process.db' not in names or sum(i.file_size for i in z.infolist()) > MAX_BACKUP_BYTES:
                         raise ValueError('备份缺少数据库或解压后超过 250 MB')
@@ -440,6 +504,8 @@ class Store:
                         candidate = Path(tmp) / 'candidate.db'
                         candidate.write_bytes(db_bytes)
                         c = sqlite3.connect(candidate)
+                        candidate_cipher = StorageCipher(self.cipher.key_file)
+                        c.execute('PRAGMA secure_delete=ON')
                         try:
                             c.execute('PRAGMA trusted_schema=OFF')
                             version = c.execute('PRAGMA user_version').fetchone()[0]
@@ -449,17 +515,19 @@ class Store:
                             try:
                                 expected.executescript(V1_SCHEMA if version == 1 else SCHEMA)
                                 query = "SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
-                                if c.execute(query).fetchall() != expected.execute(query).fetchall():
+                                if [tuple(r) for r in c.execute(query).fetchall()] != expected.execute(query).fetchall():
                                     raise ValueError('数据库结构不兼容')
                             finally:
                                 expected.close()
+                            candidate_cipher.configure(c)
+                            c.row_factory = candidate_cipher.sqlite_row
                             if version == 1:
                                 c.executescript(NOTEBOOK_SCHEMA)
-                                self.migrate_notebooks(c)
+                                self.migrate_notebooks(c, candidate_cipher)
                                 c.commit()
                             if c.execute('PRAGMA foreign_key_check').fetchall():
                                 raise ValueError('数据库关联损坏')
-                            c.row_factory = sqlite3.Row
+                            c.row_factory = candidate_cipher.sqlite_row
                             for table in ['projects', 'records', 'entries', 'attachments']:
                                 for row in c.execute('SELECT id FROM '+table):
                                     identifier = row['id']
@@ -485,17 +553,20 @@ class Store:
                                 self.validate_cells(c, record_id, json.loads(cells), restoring=True)
                             blobs = {}
                             for filename, size in c.execute('SELECT file,size FROM attachments'):
-                                data = z.read('attachments/'+filename)
+                                data = self.decode_attachment(z.read('attachments/'+filename), filename)
                                 if hashlib.sha256(data).hexdigest() != filename or len(data) != size:
                                     raise ValueError('附件校验失败')
-                                blobs[filename] = data
+                                blobs[filename] = self.cipher.encrypt(data, 'attachment:'+filename)
+                            self.migrate_encryption(c, candidate_cipher)
+                            c.commit()
+                            c.execute('VACUUM')
                         finally:
                             c.close()
                         backups = self.root / 'backups'
                         backups.mkdir(exist_ok=True)
                         (backups / ('before-restore-'+uid()+'.zip')).write_bytes(self.backup())
                         for filename, data in blobs.items():
-                            (self.files / filename).write_bytes(data)
+                            self.write_attachment_bytes(self.files / filename, data)
                         # Atomic replacement happens only after every validation and write succeeds.
                         os.replace(candidate, self.db)
             except (zipfile.BadZipFile, sqlite3.Error, KeyError, TypeError, json.JSONDecodeError, RuntimeError) as e:

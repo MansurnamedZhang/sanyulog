@@ -1,4 +1,5 @@
 """PostgreSQL persistence; SQLite is used only for portable backup interchange."""
+from storage_crypto import StorageCipher, SENSITIVE
 import hashlib
 import os
 import json
@@ -21,9 +22,9 @@ class Row(dict):
         return tuple(self.values())[key] if isinstance(key, int) else super().__getitem__(key)
 
 
-def row_factory(cursor):
+def row_factory(cursor, cipher=None):
     columns = [column.name for column in cursor.description] if cursor.description else []
-    return lambda values: Row((name, value) for name, value in zip(columns, values) if name != 'rowid')
+    return lambda values: Row((name, cipher.open(value, name) if cipher and name in SENSITIVE else value) for name, value in zip(columns, values) if name != 'rowid')
 
 
 class Connection:
@@ -40,7 +41,8 @@ class Connection:
 
 
 class PostgreSQLStore(Store):
-    def __init__(self, root, database_url, attachments_dir=None):
+    def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None):
+        self.cipher = StorageCipher(encryption_key_file)
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.files = Path(attachments_dir).resolve() if attachments_dir else self.root / 'attachments'
@@ -57,7 +59,10 @@ class PostgreSQLStore(Store):
                 c.raw.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rowid BIGINT GENERATED ALWAYS AS IDENTITY')
             c.raw.execute('INSERT INTO settings(key,value) VALUES (%s,%s) ON CONFLICT(key) DO NOTHING',
                           ('templates', json.dumps(DEFAULT_TEMPLATES, ensure_ascii=False)))
+            self.cipher.configure(c)
             self.migrate_notebooks(c)
+            self.migrate_encryption(c)
+        self.encrypt_attachment_files()
 
     @contextmanager
     def connection(self):
@@ -67,7 +72,7 @@ class PostgreSQLStore(Store):
                 yield existing
                 return
             try:
-                with psycopg.connect(self.database_url, row_factory=row_factory, connect_timeout=10,
+                with psycopg.connect(self.database_url, row_factory=lambda cursor: row_factory(cursor, self.cipher), connect_timeout=10,
                                      options='-c statement_timeout=60000 -c lock_timeout=30000') as raw:
                     # Serialize store transactions across threads/processes before reading versions.
                     raw.execute('SELECT pg_advisory_xact_lock(728351024)')
@@ -82,14 +87,14 @@ class PostgreSQLStore(Store):
 
     def backup(self):
         with self.connection() as c, tempfile.TemporaryDirectory(dir=self.root) as directory:
-            portable = Store(directory)
+            portable = Store(directory, encryption_key_file=self.cipher.key_file)
             with sqlite3.connect(portable.db) as target:
                 target.execute('DELETE FROM settings')
                 for table in TABLES:
                     columns = [row[1] for row in target.execute('PRAGMA table_info('+table+')')]
                     rows = c.execute('SELECT '+','.join(columns)+' FROM '+table+' ORDER BY rowid').fetchall()
                     target.executemany('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in columns)+')',
-                                       [tuple(row[column] for column in columns) for row in rows])
+                                       [tuple(self.cipher.seal(row[column], column) if column in SENSITIVE else row[column] for column in columns) for row in rows])
             for row in c.execute('SELECT DISTINCT file FROM attachments'):
                 shutil.copyfile(self.files / row['file'], portable.files / row['file'])
             return portable.backup()
@@ -97,7 +102,7 @@ class PostgreSQLStore(Store):
     def restore(self, content):
         # Reuse strict schema, ID, relationship, notebook and attachment validation.
         with self.connection() as c, tempfile.TemporaryDirectory(dir=self.root) as directory:
-            candidate = Store(directory)
+            candidate = Store(directory, encryption_key_file=self.cipher.key_file)
             candidate.restore(content)
             backups = self.root / 'backups'
             backups.mkdir(exist_ok=True)

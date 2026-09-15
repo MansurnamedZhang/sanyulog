@@ -101,3 +101,31 @@ class PostgreSQLTests(unittest.TestCase):
                 pass
         self.assertEqual(self.s.state(), before)
         self.assertEqual(self.s.read_attachment(a['id'])[1], b'precious original')
+
+    def test_z_encryption_migration_and_backup(self):
+        key = self.root / 'storage.key'
+        key.write_bytes(os.urandom(32))
+        before = self.s.state()
+        encrypted = self.factory(self.root, self.dsn, encryption_key_file=key)
+        try:
+            self.assertEqual(encrypted.state(), before)
+            with encrypted.connection() as c:
+                with c.raw.cursor(row_factory=__import__('psycopg').rows.tuple_row) as raw:
+                    raw.execute('SELECT title FROM records WHERE id=%s', (self.r['id'],))
+                    self.assertTrue(raw.fetchone()[0].startswith('plenc:v1:'))
+            a = encrypted.add_attachment(self.r['id'], 'private.txt', b'PRIVATE-PG-CONTENT', 'text/plain')
+            expected = encrypted.state()
+            backup = encrypted.backup()
+            self.assertFalse(backup.startswith(b'PK'))
+            local = Store(self.root / 'encrypted-copy', encryption_key_file=key)
+            local.restore(backup)
+            self.assertEqual(local.state(), expected)
+            encrypted.restore(backup)
+            self.assertEqual(encrypted.state(), expected)
+            self.assertEqual(encrypted.read_attachment(a['id'])[1], b'PRIVATE-PG-CONTENT')
+            with self.assertRaises(ValueError): self.factory(self.root, self.dsn)
+        finally:
+            # Only the explicitly configured isolated test database is used here.
+            with encrypted.connection() as c:
+                c.execute('DELETE FROM projects')
+                c.execute('DELETE FROM settings')

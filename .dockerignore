@@ -16,3 +16,8 @@ migration/
 releases/
 *.db
 *.sqlite*
+
+# Server encryption key material
+secrets/
+*.key
+*.plbackup

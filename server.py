@@ -74,7 +74,8 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/state':
                     return self.send(s.state())
                 if path == '/api/backup':
-                    return self.send(s.backup(), 'application/zip', filename='process-log-backup.zip')
+                    return self.send(s.backup(), 'application/octet-stream' if s.cipher.aes else 'application/zip',
+                                     filename='process-log-backup.plbackup' if s.cipher.aes else 'process-log-backup.zip')
                 parts = path.strip('/').split('/')
                 if len(parts) == 4 and parts[:2] == ['api', 'records'] and parts[3] == 'markdown':
                     return self.send(s.markdown(parts[2]).encode(), 'text/markdown; charset=utf-8', filename='record-'+parts[2][:8]+'.md')
@@ -148,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = handle_request
 
 
-def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, database_url=None, attachments_dir=None):
+def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, database_url=None, attachments_dir=None, encryption_key_file=None):
     origins = set(allowed_origins or [])
     for origin in origins:
         parsed = urlsplit(origin)
@@ -164,9 +165,9 @@ def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, data
     try:
         if database_url:
             from pgstore import PostgreSQLStore
-            server.store = PostgreSQLStore(root, database_url, attachments_dir)
+            server.store = PostgreSQLStore(root, database_url, attachments_dir, encryption_key_file)
         else:
-            server.store = Store(root)
+            server.store = Store(root, encryption_key_file=encryption_key_file)
     except Exception:
         server.server_close()
         raise
@@ -183,7 +184,8 @@ if __name__ == '__main__':
     origins = args.allow_origin if args.allow_origin is not None else [x.strip() for x in os.environ.get('PROCESS_LOG_ALLOWED_ORIGINS', '').split(',') if x.strip()]
     try:
         httpd = make_server(args.data, args.port, host=args.host, allowed_origins=origins,
-                            database_url=os.environ.get('DATABASE_URL'), attachments_dir=os.environ.get('PROCESS_LOG_ATTACHMENTS'))
+                            database_url=os.environ.get('DATABASE_URL'), attachments_dir=os.environ.get('PROCESS_LOG_ATTACHMENTS'),
+                            encryption_key_file=os.environ.get('PROCESS_LOG_ENCRYPTION_KEY_FILE'))
     except OSError as e:
         raise SystemExit(f'Cannot start: {e}. Try --port 8766.')
     print(f'Process Log listening on {args.host}:{httpd.server_port}', flush=True)
