@@ -49,8 +49,13 @@ window.fetch = async (...args) => {
     target.origin === location.origin &&
     target.pathname.startsWith("/api/") &&
     !["/api/auth/login", "/api/auth/password"].includes(target.pathname)
-  )
-    lock();
+  ) {
+    const failure = await response
+      .clone()
+      .json()
+      .catch(() => ({}));
+    lock(failure.code === "account_changed" ? failure.error : undefined);
+  }
   return response;
 };
 async function submit(path, data) {

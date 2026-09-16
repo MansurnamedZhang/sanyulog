@@ -16,11 +16,11 @@ class AuthHttpTests(unittest.TestCase):
             server = make_server(Path(root)/'data', 0, auth_db=auth_db, cookie_secure=False)
             thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
             base = 'http://127.0.0.1:'+str(server.server_port)
-            def request(path, data=None, cookie=None, origin=None):
+            def request(path, data=None, cookie=None, origin=None, legacy=False):
                 headers={'Content-Type':'application/json', 'Origin': origin or base}
                 if cookie:
                     headers['Cookie']=cookie
-                    headers['X-Process-Log-Account']='owner'
+                    if not legacy: headers['X-Process-Log-Account']='owner'
                 req=urllib.request.Request(base+path, data=json.dumps(data).encode() if data is not None else None, headers=headers)
                 try: return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10)
                 except urllib.error.HTTPError as e: return e
@@ -35,7 +35,17 @@ class AuthHttpTests(unittest.TestCase):
                     header=response.headers['Set-Cookie']
                     self.assertIn('HttpOnly',header); self.assertIn('SameSite=Strict',header); self.assertIn('Max-Age=604800',header)
                     cookie=header.split(';')[0]
-                with request('/api/state', cookie=cookie) as response: self.assertEqual(response.status,200)
+                # An already-open pre-multiaccount page must not enter a login loop.
+                with request('/api/auth/status', cookie=cookie, legacy=True) as response:
+                    self.assertTrue(json.load(response)['authenticated'])
+                for legacy_path, payload in [('/api/state', None), ('/api/projects', {'name':'legacy-write'}), ('/api/auth/logout', {})]:
+                    with request(legacy_path, payload, cookie=cookie, legacy=True) as response:
+                        self.assertEqual(response.status,409)
+                        self.assertEqual(json.load(response)['code'],'page_refresh_required')
+                with request('/api/state', cookie=cookie) as response:
+                    self.assertEqual(response.status,200)
+                    self.assertEqual(json.load(response)['projects'],[])
+
                 with request('/api/auth/logout', {}, cookie=cookie) as response: self.assertIn('Max-Age=0', response.headers['Set-Cookie'])
                 with request('/api/state', cookie=cookie) as response: self.assertEqual(response.status,401)
                 with request('/api/health') as response: self.assertEqual(response.status,200)

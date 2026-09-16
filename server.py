@@ -110,8 +110,10 @@ class Handler(BaseHTTPRequestHandler):
             if auth and person and path.startswith('/api/') and path != '/api/health':
                 expected_account = self.headers.get('X-Process-Log-Account')
                 direct_download = method == 'GET' and (path.startswith('/api/attachments/') or path.endswith('/markdown'))
+                if not direct_download and not expected_account:
+                    return self.send({'error': '页面版本过旧，请刷新页面后继续；原草稿仍保留，无需重复登录', 'code': 'page_refresh_required'}, status=409)
                 if not direct_download and expected_account != person['storage_id']:
-                    return self.send({'error': '账号已切换或页面版本过旧，请刷新或重新登录；原草稿仍保留'}, status=401)
+                    return self.send({'error': '其他标签页已切换账号，请登录原账号继续，或刷新进入当前账号；原草稿仍保留', 'code': 'account_changed'}, status=401)
             if path == '/api/auth/logout' and method == 'POST' and auth:
                 auth.logout(token)
                 return self.send({'ok': True}, cookie=self.session_cookie())

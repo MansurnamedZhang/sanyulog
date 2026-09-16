@@ -51,7 +51,7 @@ python auth.py --db /persistent/private/auth.db --username admin --reset
 
 ## 从单账号升级
 
-升级前备份认证数据库、数据和部署配置。首次启动在一个 SQLite 事务内把旧 `account` 转为 `users`，原账号固定为管理员 ID 1，保留密码哈希及未过期会话；原笔记和附件继续使用原数据区，不搬移或共享给新账号。已经打开的旧版本页面需要刷新一次。
+升级前备份认证数据库、数据和部署配置。首次启动在一个 SQLite 事务内把旧 `account` 转为 `users`，原账号固定为管理员 ID 1，保留密码哈希及未过期会话；原笔记和附件继续使用原数据区，不搬移或共享给新账号。已经打开的旧版本页面需要刷新一次。缺少新版账号请求头时返回 HTTP 409 / `page_refresh_required`，提示刷新而非会话过期；不接受旧页面写入，也不撤销现有会话。
 
 新账号的数据区使用不可复用的随机标识：SQLite 位于数据根目录 `accounts/<storage_id>/`；PostgreSQL 使用独立 `process_log_user_<storage_id>` schema，附件也有独立目录。所有数据区沿用现有存储加密配置。PostgreSQL 应用数据库用户须能创建自己的 schema。
 

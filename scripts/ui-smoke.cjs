@@ -79,6 +79,23 @@ const assert = require("node:assert/strict");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("[data-action=select]").first().click();
     await page.locator(".nb-title").waitFor();
+    // Simulate a page left open across the multi-account upgrade.
+    await page.route("**/api/state", async (route) => {
+      const headers = { ...route.request().headers() };
+      delete headers["x-process-log-account"];
+      await route.continue({ headers });
+    });
+    const legacyResult = await page.evaluate(async () => {
+      const response = await fetch("/api/state");
+      return { status: response.status, body: await response.json() };
+    });
+    assert.equal(legacyResult.status, 409);
+    assert.equal(legacyResult.body.code, "page_refresh_required");
+    assert.equal(await page.locator("#reauth-form").count(), 0);
+    await page.unroute("**/api/state");
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    await page.locator(".nb-title").waitFor();
     const firstDraftCell = page.locator(".nb-cell").first();
     const draftArea = firstDraftCell.locator("[data-source]");
     if (!(await draftArea.isVisible()))
