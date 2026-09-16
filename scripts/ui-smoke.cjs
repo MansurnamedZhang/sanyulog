@@ -260,11 +260,14 @@ const assert = require("node:assert/strict");
       await alicePage
         .locator('#login-form [name="password"]')
         .fill("alice-test-password-only");
-      await alicePage.locator("#login-form button").click();
-      await alicePage.locator(".workspace").waitFor();
-      const aliceState = await alicePage.evaluate(async () =>
-        (await fetch("/api/state")).json(),
+      const aliceStateResponse = alicePage.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/api/state",
       );
+      await alicePage.locator("#login-form button").click();
+      const stateResponse = await aliceStateResponse;
+      assert.equal(stateResponse.status(), 200);
+      const aliceState = await stateResponse.json();
+      await alicePage.locator(".workspace").waitFor();
       assert.equal(aliceState.records.length, 0);
       assert.equal(aliceState.projects.length, 0);
       assert(
