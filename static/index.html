@@ -56,14 +56,25 @@
         </div>
         <nav id="projects"></nav>
         <div class="side-bottom">
+          <div class="account-name" data-auth-control hidden>
+            当前账号：<strong data-account-name></strong>
+          </div>
+          <button
+            class="side-tool"
+            data-admin-control
+            data-action="manage-accounts"
+            hidden
+          >
+            账号管理
+          </button>
           <button class="side-tool" data-action="templates">
             <span>▧</span> 记录模板
           </button>
           <button class="side-tool" data-action="backup">
-            <span>↓</span> 完整备份
+            <span>↓</span> 当前账号备份
           </button>
           <button class="side-tool" data-action="restore">
-            <span>↥</span> 从备份恢复
+            <span>↥</span> 恢复当前账号
           </button>
           <button
             class="side-tool"

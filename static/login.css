@@ -124,3 +124,34 @@
     padding: 24px;
   }
 }
+.accounts-dialog {
+  width: min(calc(100% - 32px), 600px);
+}
+.account-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #dce2d5;
+  padding: 14px 0;
+}
+.account-row strong {
+  flex: 1 1 150px;
+  overflow-wrap: anywhere;
+}
+.account-row span {
+  font-size: 13px;
+  color: #697965;
+}
+.account-row button {
+  width: auto;
+  font-size: 13px;
+  padding: 6px 10px;
+  min-height: 36px;
+}
+.account-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: #697965;
+  padding: 8px 12px;
+}

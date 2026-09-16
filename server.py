@@ -8,6 +8,7 @@ import sqlite3
 import sys
 from http.cookies import SimpleCookie, CookieError
 from auth import Auth, RateLimited
+from account_stores import AccountStores
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -95,8 +96,8 @@ class Handler(BaseHTTPRequestHandler):
             auth = self.server.auth
             token = self.session_token()
             if path == '/api/auth/status' and method == 'GET':
-                username = auth.user(token) if auth else None
-                return self.send({'enabled': bool(auth), 'authenticated': bool(username), 'username': username,
+                person = auth.principal(token) if auth else None
+                return self.send({'enabled': bool(auth), 'authenticated': bool(person), 'username': person['username'] if person else None, 'user': person,
                                   'days': auth.seconds // 86400 if auth else None})
             if path == '/api/auth/login' and method == 'POST' and auth:
                 if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
@@ -105,15 +106,34 @@ class Handler(BaseHTTPRequestHandler):
                 new_token = auth.login(data.get('username'), data.get('password'), self.auth_peer())
                 if not new_token: return self.send({'error': '用户名或密码错误'}, status=401)
                 return self.send({'ok': True}, cookie=self.session_cookie(new_token))
+            person = auth.principal(token) if auth else None
+            if auth and person and path.startswith('/api/') and path != '/api/health':
+                expected_account = self.headers.get('X-Process-Log-Account')
+                direct_download = method == 'GET' and (path.startswith('/api/attachments/') or path.endswith('/markdown'))
+                if not direct_download and expected_account != person['storage_id']:
+                    return self.send({'error': '账号已切换或页面版本过旧，请刷新或重新登录；原草稿仍保留'}, status=401)
             if path == '/api/auth/logout' and method == 'POST' and auth:
                 auth.logout(token)
                 return self.send({'ok': True}, cookie=self.session_cookie())
-            username = auth.user(token) if auth else None
-            if auth and not username:
+            if auth and not person:
                 if path.startswith('/api/') and path != '/api/health':
                     return self.send({'error': '请登录后继续，当前输入仍保留在页面中'}, status=401)
                 if method == 'GET' and path in ('/', '/cell-export.html'):
                     return self.send((BASE / 'static' / 'login.html').read_bytes(), 'text/html; charset=utf-8')
+            if auth and person and path.startswith('/api/'):
+                s = self.server.account_stores.get(person)
+            if auth and path == '/api/auth/users' and method == 'GET':
+                return self.send({'users': auth.list_users(token)})
+            if auth and path == '/api/auth/users' and method == 'POST':
+                if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
+                data=json.loads(self.body(4096))
+                if not isinstance(data,dict): raise ValueError('请求必须为对象')
+                return self.send(auth.create_user(token,data.get('username'),data.get('password')))
+            if auth and path.startswith('/api/auth/users/') and method == 'PUT':
+                if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
+                data=json.loads(self.body(4096))
+                auth.update_user(token,int(path.rsplit('/',1)[1]),data)
+                return self.send({'ok':True})
             if path == '/api/auth/password' and method == 'POST' and auth:
                 if self.headers.get_content_type() != 'application/json': raise ValueError('需要 JSON 格式')
                 data = json.loads(self.body(4096))
@@ -122,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send({'error': '当前密码错误或登录已过期'}, status=401)
                 return self.send({'ok': True}, cookie=self.session_cookie())
             if method == 'GET':
-                static = {'/auth-ui.js': 'auth-ui.js', '/login.css': 'login.css', '/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
+                static = {'/accounts-ui.js': 'accounts-ui.js', '/auth-ui.js': 'auth-ui.js', '/login.css': 'login.css', '/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
                 if path in static:
                     file = BASE / 'static' / static[path]
                     content_type = 'text/javascript' if file.suffix in ['.js', '.mjs'] else (mimetypes.guess_type(file)[0] or 'application/octet-stream')
@@ -191,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[3] == 'duplicate':
                     return self.send(s.duplicate(parts[2]))
             raise KeyError('接口不存在')
+        except PermissionError as e:
+            self.send({'error': str(e)}, status=403)
         except RateLimited as e:
             self.send({'error': str(e)}, status=429)
         except Conflict as e:
@@ -233,6 +255,7 @@ def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, data
             server.store = PostgreSQLStore(root, database_url, attachments_dir, encryption_key_file)
         else:
             server.store = Store(root, encryption_key_file=encryption_key_file)
+        server.account_stores = AccountStores(server.store, root, database_url, attachments_dir, encryption_key_file)
     except Exception:
         server.server_close()
         raise

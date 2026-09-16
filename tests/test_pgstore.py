@@ -129,3 +129,28 @@ class PostgreSQLTests(unittest.TestCase):
             with encrypted.connection() as c:
                 c.execute('DELETE FROM projects')
                 c.execute('DELETE FROM settings')
+
+    def test_account_schema_isolation_and_backup(self):
+        import secrets
+        from account_stores import AccountStores
+        registry=AccountStores(self.s, self.root, self.dsn)
+        storage_id=secrets.token_hex(16)
+        secondary=registry.get({'storage_id':storage_id})
+        try:
+            self.assertEqual(secondary.state()['records'],[])
+            p=secondary.create_project({'name':'secondary'})
+            r=secondary.create_record({'project_id':p['id'],'title':'secondary-only'})
+            a=secondary.add_attachment(r['id'],'secondary.txt',b'secondary-bytes','text/plain')
+            with self.assertRaises(KeyError): secondary.get_record(self.r['id'])
+            with self.assertRaises(KeyError): self.s.read_attachment(a['id'])
+            expected=secondary.state()
+            before=self.s.state()
+            backup=secondary.backup()
+            secondary.restore(backup)
+            self.assertEqual(secondary.state(),expected)
+            self.assertEqual(self.s.state(),before)
+            restarted=self.factory(self.root/'accounts'/storage_id,self.dsn,namespace='process_log_user_'+storage_id)
+            self.assertEqual(restarted.state(),expected)
+        finally:
+            with self.s.connection() as c:
+                c.raw.execute('DROP SCHEMA "process_log_user_'+storage_id+'" CASCADE')

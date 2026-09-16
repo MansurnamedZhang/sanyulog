@@ -41,7 +41,10 @@ class Connection:
 
 
 class PostgreSQLStore(Store):
-    def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None):
+    def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None, namespace=None):
+        if namespace is not None and not re.fullmatch(r'process_log_user_[a-f0-9]{32}', namespace):
+            raise ValueError('账号数据库命名空间无效')
+        self.namespace = namespace
         self.cipher = StorageCipher(encryption_key_file)
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -51,6 +54,8 @@ class PostgreSQLStore(Store):
         self.lock = threading.RLock()
         self.local = threading.local()
         with self.connection() as c:
+            if self.namespace:
+                c.raw.execute('CREATE SCHEMA IF NOT EXISTS "'+self.namespace+'"')
             schema = V1_SCHEMA.split('PRAGMA')[0] + NOTEBOOK_SCHEMA.split('PRAGMA')[0]
             schema = schema.replace('related_id TEXT REFERENCES records(id) ON DELETE SET NULL',
                                     'related_id TEXT REFERENCES records(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED')
@@ -76,6 +81,8 @@ class PostgreSQLStore(Store):
                                      options='-c statement_timeout=60000 -c lock_timeout=30000') as raw:
                     # Serialize store transactions across threads/processes before reading versions.
                     raw.execute('SELECT pg_advisory_xact_lock(728351024)')
+                    if self.namespace:
+                        raw.execute('SET search_path TO "'+self.namespace+'"')
                     connection = Connection(raw)
                     self.local.connection = connection
                     try:

@@ -1,4 +1,5 @@
-import { changePassword, notifyLogout } from "./auth-ui.js";
+import { manageAccounts } from "./accounts-ui.js";
+import { changePassword, notifyLogout, accountKey } from "./auth-ui.js";
 import { newId } from "./notebook-core.mjs";
 import { Notebook } from "./notebook.js";
 const $ = (s, root = document) => root.querySelector(s);
@@ -36,12 +37,22 @@ const draftKey = (id) => "process-log:draft:" + id;
 const entryKey = (id) => "process-log:entry:" + id;
 function readLocal(key) {
   try {
-    return JSON.parse(localStorage.getItem(key));
+    const scoped = "process-log:account:" + accountKey() + ":" + key;
+    if (
+      accountKey() === "owner" &&
+      localStorage.getItem(scoped) === null &&
+      localStorage.getItem(key) !== null
+    ) {
+      localStorage.setItem(scoped, localStorage.getItem(key));
+      localStorage.removeItem(key);
+    }
+    return JSON.parse(localStorage.getItem(scoped));
   } catch {
     return null;
   }
 }
 function writeLocal(key, value) {
+  key = "process-log:account:" + accountKey() + ":" + key;
   try {
     value === null
       ? localStorage.removeItem(key)
@@ -486,7 +497,12 @@ async function act(action, el) {
       await api("/auth/logout", "POST", {});
       try {
         for (const key of Object.keys(localStorage)) {
-          if (/^process-log:(draft|entry|notebook):/.test(key))
+          if (
+            key.startsWith(
+              "process-log:account:" + accountKey() + ":process-log:",
+            ) &&
+            /:(draft|entry|notebook):/.test(key)
+          )
             localStorage.removeItem(key);
         }
       } finally {
@@ -494,6 +510,9 @@ async function act(action, el) {
         location.replace("/");
       }
       return;
+    case "manage-accounts":
+      await notebook?.flush();
+      return manageAccounts();
     case "change-password":
       await notebook?.flush();
       return changePassword();
@@ -502,7 +521,7 @@ async function act(action, el) {
     case "restore":
       modal(
         "从备份恢复",
-        `<p class="muted">恢复会替换当前全部项目、记录和模板。工具会先检查备份，并自动保存一份恢复前的完整备份。</p><p class="modal-info">支持过程簿 ZIP 和加密备份 .plbackup，解压后不超过 250 MB。加密备份须在配置相同密钥的服务器恢复。未保存的草稿不包含在备份中，请先保存。</p><div class="modal-footer"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="pick-restore">选择备份文件</button></div>`,
+        `<p class="muted">恢复只替换当前账号的项目、记录和模板，不影响其他账号。工具会先检查备份，并自动保存一份恢复前的完整备份。</p><p class="modal-info">支持过程簿 ZIP 和加密备份 .plbackup，解压后不超过 250 MB。加密备份须在配置相同密钥的服务器恢复。未保存的草稿不包含在备份中，请先保存。</p><div class="modal-footer"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="pick-restore">选择备份文件</button></div>`,
       );
       return;
     case "pick-restore":
@@ -712,7 +731,7 @@ $("#restore-picker").addEventListener("change", async (event) => {
   event.target.value = "";
   if (!file) return;
   if (file.size > 250 * 1024 * 1024) return toast("备份不能超过 250 MB", true);
-  if (!confirm("使用「" + file.name + "」替换当前全部数据？")) return;
+  if (!confirm("使用「" + file.name + "」替换当前账号全部数据？")) return;
   busy = true;
   try {
     const beforeRestore = await api("/state");

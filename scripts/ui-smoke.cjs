@@ -86,7 +86,7 @@ const assert = require("node:assert/strict");
     const beforeExpiry = await draftArea.inputValue();
     await page.request.post("http://127.0.0.1:" + port + "/api/auth/logout", {
       data: {},
-      headers: { "X-Process-Log": "1" },
+      headers: { "X-Process-Log": "1", "X-Process-Log-Account": "owner" },
     });
     await draftArea.fill(beforeExpiry + "\n\n登录过期测试草稿");
     await page.locator("#reauth-form").waitFor();
@@ -239,6 +239,47 @@ const assert = require("node:assert/strict");
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('[data-action="manage-accounts"]').click();
+    const createAccount = page.locator("[data-create-account]");
+    await createAccount.locator('[name="username"]').fill("ui-alice");
+    await createAccount
+      .locator('[name="password"]')
+      .fill("alice-test-password-only");
+    await createAccount.locator('[type="submit"]').click();
+    const aliceRow = page
+      .locator(".account-row")
+      .filter({ hasText: "ui-alice" });
+    await aliceRow.waitFor();
+    const aliceContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+    });
+    try {
+      const alicePage = await aliceContext.newPage();
+      await alicePage.goto("http://127.0.0.1:" + port);
+      await alicePage.locator('#login-form [name="username"]').fill("ui-alice");
+      await alicePage
+        .locator('#login-form [name="password"]')
+        .fill("alice-test-password-only");
+      await alicePage.locator("#login-form button").click();
+      await alicePage.locator(".workspace").waitFor();
+      const aliceState = await alicePage.evaluate(async () =>
+        (await fetch("/api/state")).json(),
+      );
+      assert.equal(aliceState.records.length, 0);
+      assert.equal(aliceState.projects.length, 0);
+      assert(
+        await alicePage.locator('[data-action="manage-accounts"]').isHidden(),
+      );
+      await aliceRow.getByRole("button", { name: "停用", exact: true }).click();
+      await aliceRow
+        .getByRole("button", { name: "启用", exact: true })
+        .waitFor();
+      await alicePage.reload();
+      await alicePage.locator("#login-form").waitFor();
+    } finally {
+      await aliceContext.close();
+    }
+    await page.locator(".accounts-dialog > .auth-cancel").click();
     await page.locator('[data-action="change-password"]').click();
     const passwordForm = page
       .locator(".auth-dialog form")
@@ -276,7 +317,7 @@ const assert = require("node:assert/strict");
     );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and auto-preview; mobile navigation; workspace switch; table overflow; no JS page errors.",
+      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and auto-preview; mobile navigation; workspace switch; table overflow; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

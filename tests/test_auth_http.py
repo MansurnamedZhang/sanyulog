@@ -18,7 +18,9 @@ class AuthHttpTests(unittest.TestCase):
             base = 'http://127.0.0.1:'+str(server.server_port)
             def request(path, data=None, cookie=None, origin=None):
                 headers={'Content-Type':'application/json', 'Origin': origin or base}
-                if cookie: headers['Cookie']=cookie
+                if cookie:
+                    headers['Cookie']=cookie
+                    headers['X-Process-Log-Account']='owner'
                 req=urllib.request.Request(base+path, data=json.dumps(data).encode() if data is not None else None, headers=headers)
                 try: return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10)
                 except urllib.error.HTTPError as e: return e
