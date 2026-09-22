@@ -1,4 +1,5 @@
 import { Editor } from "@tiptap/core";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { TableKit } from "@tiptap/extension-table";
@@ -99,6 +100,25 @@ export function createRichEditor(element, source, onChange) {
         "aria-label": "所见即所得内容",
         role: "textbox",
         "aria-multiline": "true",
+      },
+      handleClick(view, pos, event) {
+        if (
+          event.button !== 0 ||
+          event.shiftKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
+          !event.target.closest("td, th")
+        )
+          return false;
+        // Commit a cell click synchronously. Native selectionchange can arrive
+        // after the next keydown and otherwise leave the previous cell active.
+        view.dispatch(
+          view.state.tr
+            .setSelection(TextSelection.near(view.state.doc.resolve(pos)))
+            .setMeta("pointer", true),
+        );
+        return true;
       },
       handlePaste(view, event) {
         if (event.clipboardData?.files.length) return false;
