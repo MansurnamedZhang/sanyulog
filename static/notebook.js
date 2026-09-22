@@ -300,7 +300,7 @@ export class Notebook {
       .map((r, i) => rowHTML(r, 1 + page * 50 + i))
       .join(
         "",
-      )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>第一行为表头；支持粘贴 CSV 或 Excel 区域，最多 1000 行数据、50 列。</small></div>`;
+      )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
   }
   saveTable(cell, rows) {
     const source = serializeCSV(rows);
@@ -795,11 +795,14 @@ export class Notebook {
     const area = event.target,
       cell = this.cell(area.closest("[data-cell]")?.dataset.cell);
     const text = event.clipboardData?.getData("text/plain") || "";
-    if (area.matches("[data-grid-row]") && /[\t\r\n]/.test(text)) {
+    const spreadsheet =
+      text.includes("\t") ||
+      /<table(?:\s|>)/i.test(event.clipboardData?.getData("text/html") || "");
+    if (area.matches("[data-grid-row]") && text && spreadsheet) {
       event.preventDefault();
       event.stopPropagation();
       try {
-        const incoming = parseCSV(text, text.includes("\t") ? "\t" : ","),
+        const incoming = parseCSV(text, "\t"),
           rows = this.tableRows(cell),
           startRow = Number(area.dataset.gridRow),
           startCol = Number(area.dataset.gridCol),

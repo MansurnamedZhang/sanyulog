@@ -253,3 +253,82 @@ test("Markdown renders mixed nested lists inside parent items", () => {
     "<ul><li>一</li><li>二</li></ul><p>正文</p>",
   );
 });
+
+test("grid paste keeps paragraphs in one cell and still accepts Excel regions", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(
+    new URL("../static/notebook.js", import.meta.url),
+    "utf8",
+  ).replace(/['"]\.\/notebook-core\.mjs['"]/, JSON.stringify(location.href));
+  const { Notebook } = await import(
+    "data:text/javascript;base64," + Buffer.from(source).toString("base64")
+  );
+  const notebook = Object.create(Notebook.prototype);
+  const cell = {
+    id: "a",
+    type: "table",
+    source: core.serializeCSV([
+      ["标题", "备注"],
+      ["原文", "保留"],
+      ["下一行", "不覆盖"],
+    ]),
+  };
+  notebook.cell = () => cell;
+  notebook.queue = { data: { cells: [cell] }, change() {} };
+  notebook.renderCells = () => {};
+  notebook.toast = (message) => {
+    throw new Error(message);
+  };
+  const area = {
+    dataset: { gridRow: "1", gridCol: "0" },
+    closest: () => ({ dataset: { cell: "a" } }),
+    matches: (selector) => selector === "[data-grid-row]",
+  };
+  const paste = (text, html = "") => {
+    let prevented = false;
+    notebook.paste({
+      target: area,
+      clipboardData: {
+        getData: (type) => (type === "text/plain" ? text : html),
+        files: [],
+      },
+      preventDefault() {
+        prevented = true;
+      },
+      stopPropagation() {},
+    });
+    return prevented;
+  };
+  const paragraphs = '第一段，含标点\n\n第二段,含逗号和"引号"\n第三段';
+  const original = cell.source;
+  assert.equal(
+    paste(paragraphs),
+    false,
+    "ordinary paragraphs use native textarea paste",
+  );
+  assert.equal(
+    cell.source,
+    original,
+    "paste must not overwrite neighboring rows",
+  );
+  area.value = paragraphs;
+  notebook.input({ target: area, stopPropagation() {} });
+  assert.deepEqual(core.parseCSV(cell.source), [
+    ["标题", "备注"],
+    [paragraphs, "保留"],
+    ["下一行", "不覆盖"],
+  ]);
+  assert.equal(paste('A\t"第一段\n第二段"\r\nB\tC'), true);
+  assert.deepEqual(core.parseCSV(cell.source).slice(1), [
+    ["A", "第一段\n第二段"],
+    ["B", "C"],
+  ]);
+  assert.equal(
+    paste(
+      "甲\r\n乙",
+      "<table><tr><td>甲</td></tr><tr><td>乙</td></tr></table>",
+    ),
+    true,
+  );
+  assert.equal(core.parseCSV(cell.source)[2][0], "乙");
+});

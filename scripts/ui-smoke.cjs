@@ -252,6 +252,53 @@ const assert = require("node:assert/strict");
     const grid = page.locator(".nb-data-grid").first();
     await grid.scrollIntoViewIfNeeded();
     assert((await grid.boundingBox()).width < 390);
+    const gridCell = grid.locator('[data-grid-row="1"][data-grid-col="3"]');
+    const neighbor = await grid
+      .locator('[data-grid-row="2"][data-grid-col="3"]')
+      .inputValue();
+    const paragraphs = '第一段，包含逗号,和"引号"\n\n第二段文字';
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    await gridCell.fill("前缀：");
+    await gridCell.press("End");
+    await page.evaluate(
+      (text) => navigator.clipboard.writeText(text),
+      paragraphs,
+    );
+    await gridCell.press("Control+V");
+    await page.waitForFunction(
+      (expected) =>
+        document.querySelector('[data-grid-row="1"][data-grid-col="3"]')
+          .value === expected,
+      "前缀：" + paragraphs,
+    );
+    const gridSaved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        response.url().includes("/api/records/") &&
+        (response.request().postData() || "").includes("third paragraph"),
+    );
+    await gridCell.press("Enter");
+    await gridCell.pressSequentially("third paragraph");
+    const expectedGridText = "前缀：" + paragraphs + "\nthird paragraph";
+    assert.equal(await gridCell.inputValue(), expectedGridText);
+    assert.equal(
+      await grid.locator('[data-grid-row="2"][data-grid-col="3"]').inputValue(),
+      neighbor,
+    );
+    assert.equal((await gridSaved).status(), 200);
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.equal(
+      await page.locator('[data-grid-row="1"][data-grid-col="3"]').inputValue(),
+      expectedGridText,
+    );
+    assert.equal(
+      await page.locator('[data-grid-row="2"][data-grid-col="3"]').inputValue(),
+      neighbor,
+    );
+
     await page.locator("#detail").evaluate((e) => (e.scrollTop = 0));
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });
