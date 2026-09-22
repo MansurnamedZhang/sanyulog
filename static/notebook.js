@@ -2,7 +2,6 @@ import {
   newId,
   Autosave,
   escapeHTML as esc,
-  renderMarkdown,
   formatSelection,
   createTable,
   tsvToTable,
@@ -59,6 +58,7 @@ export class Notebook {
     this.controller = new AbortController();
     this.active = "";
     this.editing = new Set();
+    this.richEditors = new Map();
     this.deleted = null;
     this.uploading = false;
     const savedDraft = readDraft(record.id),
@@ -97,7 +97,8 @@ export class Notebook {
     root.addEventListener(
       "mousedown",
       (e) => {
-        if (e.target.closest("[data-format]")) e.preventDefault();
+        if (e.target.closest("[data-format], [data-nb=rich-table]"))
+          e.preventDefault();
       },
       { signal },
     );
@@ -111,16 +112,6 @@ export class Notebook {
         const cell = e.target.closest("[data-cell]");
         if (cell) this.setActive(cell.dataset.cell);
       },
-      { signal },
-    );
-    root.ownerDocument.addEventListener(
-      "click",
-      (e) => this.previewOutside(e.target),
-      { signal },
-    );
-    root.ownerDocument.addEventListener(
-      "focusin",
-      (e) => this.previewOutside(e.target),
       { signal },
     );
     this.render();
@@ -138,6 +129,8 @@ export class Notebook {
     await this.queue.flush();
   }
   dispose() {
+    for (const editor of this.richEditors.values()) editor.destroy();
+    this.richEditors.clear();
     this.queue.dispose();
     this.controller.abort();
   }
@@ -185,7 +178,7 @@ export class Notebook {
         )
         .join("")}</select></label></div></div></details>
       <div class="nb-toolbar"><div><span class="insert-label">插入</span><button class="button small" data-nb="add" data-type="markdown">＋ 文本</button><button class="button small" data-nb="add" data-type="code">＋ 代码</button><button class="button small" data-nb="add" data-type="log">＋ 日志</button><button class="button small" data-nb="add" data-type="file">＋ 附件</button><button class="button small" data-nb="add" data-type="table">＋ 表格</button></div><button class="text-button" data-nb="help">使用帮助</button></div>
-      <div class="nb-help" data-help hidden><b>像笔记本一样，持续记录</b><p>Shift+Enter：保存并进入下一格 · Ctrl+S：立即保存 · 代码格内 Tab：缩进。空闲 0.8 秒后自动保存。</p><p>Markdown：# 标题、**加粗**、- 列表、[链接](https://...)、表格和三反引号代码块。代码格用于记录；运行结果可放在下一格日志中。支持粘贴图片或上传任意文件。</p></div>
+      <div class="nb-help" data-help hidden><b>像笔记本一样，持续记录</b><p>源码模式 Shift+Enter：保存并进入下一格 · Ctrl+S：立即保存 · 代码格内 Tab：缩进。空闲 0.8 秒后自动保存。</p><p>手动切换源码 / 所见即所得；点击其他块不会改变模式。所见即所得可直接编辑文字和表格，点击公式可修改 LaTeX。表格内 Enter 换段，Shift+Enter 换行，Tab 切换单元格。</p><p>Markdown：# 标题、**加粗**、- 列表、[链接](https://...)、表格和三反引号代码块。代码格用于记录；运行结果可放在下一格日志中。支持粘贴图片或上传任意文件。</p></div>
       <div class="nb-cells" data-cells></div><div class="nb-end"><span>继续记下一个想法</span><div><button class="button" data-nb="append" data-type="markdown">＋ 文本单元</button><button class="button subtle" data-nb="append" data-type="code">＋ 代码</button><button class="button subtle" data-nb="append" data-type="file">＋ 图片 / 附件</button><button class="button subtle" data-nb="append" data-type="table">＋ 表格</button></div></div>
       <div class="nb-bottom"><span data-upload-status></span><button class="text-button" data-nb="undo" hidden>↶ 撤销删除单元格</button></div><details class="nb-library"><summary>本笔记本的全部附件 <span>${this.record.attachments.length}</span></summary><div data-library></div></details><input type="file" data-file-input multiple hidden>`;
     if (d._paramRows)
@@ -204,12 +197,15 @@ export class Notebook {
       .join("");
   }
   renderCells(focusId) {
+    for (const editor of this.richEditors.values()) editor.destroy();
+    this.richEditors.clear();
     $("[data-cells]", this.root).innerHTML = this.queue.data.cells
       .map((cell, index) => this.cellHTML(cell, index))
       .join("");
     $("[data-cell-count]", this.root).textContent =
       this.queue.data.cells.length + " 个单元格";
     for (const area of $$("[data-source]", this.root)) this.grow(area);
+    this.mountRichEditors(focusId);
     if (focusId) {
       this.setActive(focusId);
       const el = this.cellElement(focusId);
@@ -244,34 +240,41 @@ export class Notebook {
       "</div>"
     );
   }
-  previewOutside(target) {
-    const inside = this.root.contains(target)
-      ? target.closest("[data-cell]")?.dataset.cell
-      : null;
-    for (const id of this.editing) {
-      const cell = this.cell(id);
-      if (id === inside || cell?.type !== "markdown" || !cell.source.trim())
-        continue;
-      const element = this.cellElement(id),
-        source = element?.querySelector("[data-source]");
-      if (!source) continue;
-      const preview = this.root.ownerDocument.createElement("div");
-      element.querySelector(".nb-table-picker")?.remove();
-      preview.className = "nb-markdown";
-      preview.dataset.nb = "edit-preview";
-      preview.innerHTML = renderMarkdown(cell.source);
-      source.replaceWith(preview);
-      element.classList.add("preview");
-      const toggle = element.querySelector('[data-nb="toggle"]');
-      if (toggle) toggle.textContent = "编辑";
-      this.editing.delete(id);
+  async mountRichEditors(focusId) {
+    const hosts = [...this.root.querySelectorAll("[data-rich-editor]")];
+    if (!hosts.length) return;
+    try {
+      const { createRichEditor } = await import("./vendor/rich-editor.js");
+      for (const host of hosts) {
+        if (!host.isConnected || this.controller.signal.aborted) continue;
+        const id = host.closest("[data-cell]").dataset.cell;
+        const cell = this.cell(id);
+        host.textContent = "";
+        const instance = createRichEditor(host, cell.source, (source) => {
+          const current = this.cell(id);
+          if (!current || this.controller.signal.aborted) return;
+          current.source = source;
+          this.queue.change({ cells: this.queue.data.cells });
+        });
+        this.richEditors.set(id, instance);
+        if (id === focusId) instance.focus();
+      }
+    } catch (error) {
+      for (const host of hosts) {
+        if (!host.isConnected) continue;
+        const id = host.closest("[data-cell]").dataset.cell;
+        this.editing.add(id);
+        host.textContent =
+          "编辑器加载失败，请点击切换按钮进入源码；内容仍保留。";
+      }
+      this.renderCells();
+      this.toast("所见即所得加载失败，已回到源码：" + error.message, true);
     }
   }
   cellHTML(cell, index) {
-    const editing =
-      this.editing.has(cell.id) || !cell.source || cell.type !== "markdown";
+    const editing = this.editing.has(cell.id) || cell.type !== "markdown";
     const preview = cell.type === "markdown" && !editing;
-    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "preview" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><select data-cell-type aria-label="单元格类型">${Object.entries(
+    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><select data-cell-type aria-label="单元格类型">${Object.entries(
       labels,
     )
       .map(
@@ -280,7 +283,7 @@ export class Notebook {
       )
       .join(
         "",
-      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<button data-nb="toggle" class="text-button">${preview ? "编辑" : "预览"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div class="nb-markdown" data-nb="edit-preview">${renderMarkdown(cell.source)}</div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
+      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}">${preview ? "切换到源码" : "切换到所见即所得"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
       <div class="nb-cell-files">${this.filesHTML(cell.attachment_ids)}</div>${cell.type === "file" ? '<button class="nb-upload" data-nb="cell-file">＋ 上传图片或文件 <span>也可以直接粘贴截图 · 单个最大 25 MB</span></button>' : ""}</div></article>`;
   }
   tableRows(cell) {
@@ -421,7 +424,6 @@ export class Notebook {
     const cell = makeCell(type),
       cells = structuredClone(this.queue.data.cells);
     cells.splice(index, 0, cell);
-    this.editing.add(cell.id);
     this.active = cell.id;
     this.changeCells(cells);
     this.renderCells(focus ? cell.id : undefined);
@@ -520,7 +522,6 @@ export class Notebook {
     }
   }
   async handleClick(event) {
-    this.previewOutside(event.target);
     const button = event.target.closest("[data-nb]");
     if (!button) return;
     event.stopPropagation();
@@ -593,6 +594,15 @@ export class Notebook {
       this.renderCells();
       return;
     }
+    if (action === "rich-table") {
+      this.richEditors.get(id)?.command(button.dataset.tool);
+      return;
+    }
+    if (action === "format" && this.richEditors.has(id)) {
+      this.richEditors.get(id).command(button.dataset.format);
+      return;
+    }
+    if (action === "format" && !this.editing.has(id)) return;
     if (action === "format") {
       let element = this.cellElement(id),
         area = $("[data-source]", element);
@@ -655,9 +665,8 @@ export class Notebook {
       this.insert(button.dataset.type || "markdown", position);
       return;
     }
-    if (action === "toggle" || action === "edit-preview") {
-      if (this.editing.has(id) && action !== "edit-preview") {
-        await this.queue.flush();
+    if (action === "toggle") {
+      if (this.editing.has(id)) {
         this.editing.delete(id);
       } else this.editing.add(id);
       this.renderCells(this.editing.has(id) ? id : undefined);
@@ -763,6 +772,11 @@ export class Notebook {
     }
     const el = event.target.closest("[data-cell]");
     if (!el) return;
+    if (
+      event.target.closest("[data-rich-editor]") ||
+      event.target.matches("[data-grid-row]")
+    )
+      return;
     if (event.shiftKey && event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
@@ -792,8 +806,13 @@ export class Notebook {
     }
   }
   paste(event) {
-    const area = event.target,
-      cell = this.cell(area.closest("[data-cell]")?.dataset.cell);
+    const area = event.target;
+    if (
+      area.closest("[data-rich-editor]") &&
+      !event.clipboardData?.files.length
+    )
+      return;
+    const cell = this.cell(area.closest("[data-cell]")?.dataset.cell);
     const text = event.clipboardData?.getData("text/plain") || "";
     const spreadsheet =
       text.includes("\t") ||

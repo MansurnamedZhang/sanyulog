@@ -231,7 +231,151 @@ const assert = require("node:assert/strict");
     }
     await area.fill(original);
     await page.locator(".nb-title").click();
-    assert(await first.locator(".nb-format-toolbar").isHidden());
+    assert(
+      await first.locator("[data-source]").isVisible(),
+      "clicking outside must not change source mode",
+    );
+    const sample =
+      '# 标题\n\n**粗体**与*斜体*，`inline` 和 $x^2$。\n\n- 一级\n  - 子项\n\n```python\nprint("hello")\n```\n\n$$\nE=mc^2\n$$\n\n| 名称 | 备注 |\n| --- | --- |\n| 原文 | 邻格保留 |\n| 下一行 | 不覆盖 |';
+    await area.fill(sample);
+    await first.locator('[data-nb="toggle"]').click();
+    const rich = first.locator(".nb-rich-content");
+    await rich.waitFor();
+    assert.equal(await rich.locator("h1").innerText(), "标题");
+    assert.equal(await rich.locator("strong").innerText(), "粗体");
+    assert.equal(await rich.locator("ul ul li").innerText(), "子项");
+    assert.equal(await rich.locator("pre code").innerText(), 'print("hello")');
+    assert.equal(await rich.locator("math").count(), 2);
+    await page.locator(".nb-title").click();
+    assert(
+      await rich.isVisible(),
+      "clicking another block keeps visual editing",
+    );
+    await first.locator('[data-nb="toggle"]').click();
+    assert.equal(
+      await area.inputValue(),
+      sample,
+      "mode-only switches preserve exact source",
+    );
+    await first.locator('[data-nb="toggle"]').click();
+    const richCell = rich.locator("table tr").nth(1).locator("td").first();
+    await richCell.locator("p").click();
+    await first.locator('[data-tool="row"]').click();
+    assert.equal(await rich.locator("table tr").count(), 4);
+    await rich.locator("table tr").nth(2).locator("td p").first().click();
+    await first.locator('[data-tool="delete-row"]').click();
+    assert.equal(await rich.locator("table tr").count(), 3);
+    await richCell.locator("p").click();
+    await page.waitForFunction(
+      () =>
+        getSelection().anchorNode?.parentElement?.closest("td")?.textContent ===
+        "原文",
+    );
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("第二段");
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.evaluate(() =>
+      navigator.clipboard.writeText('\n\n第三段,含"引号"'),
+    );
+    await page.keyboard.press("Control+V");
+    await page.waitForFunction(() =>
+      document
+        .querySelector(".nb-rich-content table")
+        .textContent.includes("第三段"),
+    );
+    assert.equal(
+      await rich.locator("table tr").nth(1).locator("td").nth(1).innerText(),
+      "邻格保留",
+    );
+    assert.equal(
+      await rich.locator("table tr").nth(2).locator("td").first().innerText(),
+      "下一行",
+    );
+    await page.keyboard.press("Tab");
+    assert(
+      await rich.isVisible(),
+      "moving between table cells keeps visual editing",
+    );
+    await first.locator('[data-nb="toggle"]').click();
+    const roundTrip = await area.inputValue();
+    assert(
+      roundTrip.includes("第二段<br><br>第三段"),
+      "blank paragraphs survive serialization",
+    );
+    assert(roundTrip.includes("$x^2$") && roundTrip.includes("E=mc^2"));
+    assert(roundTrip.includes('print("hello")') && roundTrip.includes("子项"));
+    await first.locator('[data-nb="toggle"]').click();
+    assert((await richCell.innerText()).includes("第三段"));
+    assert((await richCell.innerText()).includes("第二段"));
+    assert.equal(await rich.locator("math").count(), 2);
+    await rich.locator('[data-type="inline-math"]').click();
+    const formula = first.locator(".nb-formula-dialog");
+    await formula.locator("textarea").fill("a^2+b^2");
+    const richSaved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        (response.request().postData() || "").includes("a^2+b^2"),
+    );
+    await formula.locator('[type="submit"]').click();
+    assert.equal((await richSaved).status(), 200);
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    await rich.locator("math").first().waitFor();
+    assert(
+      (await richCell.innerText()).includes("第三段"),
+      "visual edits survive a reload",
+    );
+    assert.equal(
+      await rich
+        .locator('[data-type="inline-math"]')
+        .getAttribute("data-latex"),
+      "a^2+b^2",
+    );
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    if (process.env.UI_RICH_CAPTURE) {
+      await richCell.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: process.env.UI_RICH_CAPTURE,
+        fullPage: false,
+      });
+    }
+    await first.locator('[data-nb="toggle"]').click();
+    assert((await area.inputValue()).includes("$a^2+b^2$"));
+    await area.fill(original);
+    const fallbackContext = await browser.newContext({
+      storageState: await page.context().storageState(),
+    });
+    const fallback = await fallbackContext.newPage();
+    try {
+      await fallback.route("**/vendor/rich-editor.js", (route) =>
+        route.abort(),
+      );
+      await fallback.goto("http://127.0.0.1:" + port);
+      await fallback.locator("[data-action=select]").first().click();
+      await fallback
+        .locator(".nb-cell")
+        .first()
+        .locator("[data-source]")
+        .waitFor();
+      assert(
+        (
+          await fallback
+            .locator(".nb-cell")
+            .first()
+            .locator("[data-source]")
+            .inputValue()
+        ).length > 0,
+      );
+    } finally {
+      await fallbackContext.close();
+    }
     await page.locator("[data-action=back-list]").click();
     await page.locator(".record-pane").waitFor({ state: "visible" });
     assert(await page.locator(".record-pane").isVisible());
@@ -384,7 +528,7 @@ const assert = require("node:assert/strict");
     );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and auto-preview; mobile navigation; workspace switch; table overflow; no JS page errors.",
+      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math editing and save/reload; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

@@ -295,6 +295,7 @@ export function renderMarkdown(source) {
       .map((x) => x.trim().replace(/\\\|/g, "|"));
   const tableInline = (value) =>
     inline(value)
+      .replace(/&lt;br\s*\/?&gt;/gi, "<br>")
       .replace(/&amp;#10;/g, "<br>")
       .replace(/&amp;#(\d+);/g, "&#$1;");
   const tableSeparator = (line) =>

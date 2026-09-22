@@ -2339,3 +2339,115 @@ textarea::placeholder {
     transition: none !important;
   }
 }
+
+/* Manual Markdown / visual editing modes. */
+.nb-mode-label {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.nb-rich-content {
+  outline: none;
+  min-height: 100px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.nb-rich-content > :first-child {
+  margin-top: 0;
+}
+.nb-rich-content > :last-child {
+  margin-bottom: 0;
+}
+.nb-rich-content table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+.nb-rich-content td,
+.nb-rich-content th {
+  min-width: 80px;
+  position: relative;
+  vertical-align: top;
+  border: 1px solid #dce1d4;
+  padding: 10px;
+}
+.nb-rich-content td > p,
+.nb-rich-content th > p {
+  margin: 0;
+  min-height: 1.5em;
+}
+.nb-rich-content .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #92ab772b;
+  pointer-events: none;
+}
+.nb-rich-content .ProseMirror-selectednode {
+  outline: 2px solid #94a57b;
+}
+.nb-rich-content .ProseMirror-gapcursor {
+  display: none;
+}
+.nb-rich-content .ProseMirror-gapcursor::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  border-top: 1px solid;
+  animation: nb-cursor 1s steps(2, start) infinite;
+}
+.nb-rich-content.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+@keyframes nb-cursor {
+  to {
+    visibility: hidden;
+  }
+}
+.nb-rich-content .tiptap-mathematics-render {
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.nb-rich-content [data-type="block-math"] {
+  display: block;
+  overflow-x: auto;
+  padding: 12px;
+}
+.nb-rich-content .tiptap-mathematics-render:hover {
+  background: #eef3e8;
+}
+.nb-rich-table-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid #e4e8df;
+}
+.nb-formula-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid #dce1d4;
+  border-radius: 12px;
+  padding: 20px;
+}
+.nb-formula-dialog::backdrop {
+  background: #1d302344;
+}
+.nb-formula-dialog textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin: 12px 0;
+  font-family: monospace;
+}
+.nb-formula-dialog form > div {
+  display: flex;
+  gap: 8px;
+}
+
+.nb-rich-table-tools[hidden] {
+  display: none;
+}

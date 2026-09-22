@@ -1,17 +1,27 @@
 {
   "name": "process-log",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/notebook.test.mjs",
-    "check": "node --check static/app.js && node --check static/notebook.js && node --check static/notebook-core.mjs && node --check static/cell-export.js && node --check static/auth-ui.js && node --check static/accounts-ui.js",
-    "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
-    "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs",
-    "test:ui": "node scripts/ui-smoke.cjs"
+    "check": "node --check static/app.js && node --check static/notebook.js && node --check static/notebook-core.mjs && node --check static/cell-export.js && node --check static/auth-ui.js && node --check static/accounts-ui.js && node --check src/rich-editor.js",
+    "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs src/*.js scripts/*.mjs",
+    "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs src/*.js scripts/*.mjs",
+    "test:ui": "node scripts/ui-smoke.cjs",
+    "build:editor": "node scripts/build-editor.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "playwright": "1.58.2",
     "prettier": "3.6.2"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.31.3",
+    "@tiptap/extension-image": "3.31.3",
+    "@tiptap/extension-mathematics": "3.31.3",
+    "@tiptap/extension-table": "3.31.3",
+    "@tiptap/markdown": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3"
   }
 }

@@ -281,7 +281,8 @@ test("grid paste keeps paragraphs in one cell and still accepts Excel regions", 
   };
   const area = {
     dataset: { gridRow: "1", gridCol: "0" },
-    closest: () => ({ dataset: { cell: "a" } }),
+    closest: (selector) =>
+      selector === "[data-cell]" ? { dataset: { cell: "a" } } : null,
     matches: (selector) => selector === "[data-grid-row]",
   };
   const paste = (text, html = "") => {
@@ -331,4 +332,12 @@ test("grid paste keeps paragraphs in one cell and still accepts Excel regions", 
     true,
   );
   assert.equal(core.parseCSV(cell.source)[2][0], "乙");
+});
+
+test("visual table line breaks render safely in exported Markdown", () => {
+  const rendered = core.renderMarkdown(
+    "| 名称 | 备注 |\n| --- | --- |\n| 第一段<br>第二段<br><br>第三段 | <script>alert(1)</script> |",
+  );
+  assert.ok(rendered.includes("第一段<br>第二段<br><br>第三段"));
+  assert.ok(!rendered.includes("<script>"));
 });
