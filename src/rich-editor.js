@@ -1,6 +1,7 @@
 import { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
+import CodeBlock from "@tiptap/extension-code-block";
 import { Markdown } from "@tiptap/markdown";
 import { TableKit } from "@tiptap/extension-table";
 import { InlineMath, BlockMath } from "@tiptap/extension-mathematics";
@@ -42,7 +43,110 @@ const BlockFormula = BlockMath.extend({
   },
 });
 
-export function createRichEditor(element, source, onChange) {
+const DiagramCodeBlock = CodeBlock.extend({
+  addNodeView() {
+    return ({ node, editor, getPos }) => {
+      const isDiagram = node.attrs.language?.toLowerCase() === "mermaid";
+      if (!isDiagram) {
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.className = node.attrs.language
+          ? `language-${node.attrs.language}`
+          : "";
+        pre.append(code);
+        return {
+          dom: pre,
+          contentDOM: code,
+          update(nextNode) {
+            if (
+              nextNode.type !== node.type ||
+              nextNode.attrs.language?.toLowerCase() === "mermaid"
+            )
+              return false;
+            code.className = nextNode.attrs.language
+              ? `language-${nextNode.attrs.language}`
+              : "";
+            return true;
+          },
+        };
+      }
+      let currentNode = node;
+      let timer;
+      let dialog;
+      const dom = document.createElement("div");
+      dom.className = "nb-mermaid nb-mermaid-editor";
+      const controls = document.createElement("div");
+      controls.className = "nb-mermaid-controls";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button small";
+      button.dataset.nb = "mermaid-edit";
+      button.textContent = "编辑流程图";
+      controls.append(button);
+      const pre = document.createElement("pre");
+      pre.className = "nb-mermaid-source";
+      dom.append(controls, pre);
+      const schedule = (text) => {
+        pre.textContent = text;
+        clearTimeout(timer);
+        dom.mermaidRevision = Symbol("mermaid-edit");
+        timer = setTimeout(() => this.options.renderDiagram(dom, text), 300);
+      };
+      button.onclick = () => {
+        dialog = document.createElement("dialog");
+        dialog.className = "nb-mermaid-dialog nb-formula-dialog";
+        dialog.innerHTML =
+          '<form><h3>编辑 Mermaid 流程图</h3><label>图定义<textarea aria-label="Mermaid 图定义" required></textarea></label><div><button type="submit" class="button">应用</button><button type="button" class="button subtle">取消</button></div></form>';
+        const input = dialog.querySelector("textarea");
+        input.value = currentNode.textContent;
+        dialog.querySelector("form").onsubmit = (event) => {
+          event.preventDefault();
+          const pos = getPos();
+          const original =
+            typeof pos === "number" && editor.state.doc.nodeAt(pos);
+          if (original?.type.name === "codeBlock")
+            editor.commands.insertContentAt(
+              { from: pos, to: pos + original.nodeSize },
+              {
+                type: "codeBlock",
+                attrs: { ...original.attrs, language: "mermaid" },
+                content: [{ type: "text", text: input.value }],
+              },
+            );
+          dialog.close();
+        };
+        dialog.querySelector('[type="button"]').onclick = () => dialog.close();
+        dialog.addEventListener("close", () => dialog.remove());
+        document.body.append(dialog);
+        dialog.showModal();
+        input.focus();
+      };
+      schedule(node.textContent);
+      return {
+        dom,
+        update(nextNode) {
+          if (
+            nextNode.type !== node.type ||
+            nextNode.attrs.language?.toLowerCase() !== "mermaid"
+          )
+            return false;
+          currentNode = nextNode;
+          schedule(nextNode.textContent);
+          return true;
+        },
+        ignoreMutation: () => true,
+        stopEvent: () => true,
+        destroy() {
+          clearTimeout(timer);
+          dom.mermaidRevision = Symbol("mermaid-destroy");
+          dialog?.remove();
+        },
+      };
+    };
+  },
+});
+
+export function createRichEditor(element, source, onChange, renderDiagram) {
   let editor;
   const editFormula = (block, node, pos) => {
     const dialog = document.createElement("dialog");
@@ -79,7 +183,11 @@ export function createRichEditor(element, source, onChange) {
     element,
     injectCSS: false,
     extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: false } }),
+      StarterKit.configure({
+        link: { openOnClick: false, autolink: false },
+        codeBlock: false,
+      }),
+      DiagramCodeBlock.configure({ renderDiagram }),
       Markdown,
       TableKit.configure({ table: { resizable: false } }),
       Image.configure({ allowBase64: false }),
@@ -164,6 +272,23 @@ export function createRichEditor(element, source, onChange) {
       if (tool === "math" || tool === "mathblock") {
         editFormula(tool === "mathblock");
         return;
+      }
+      if (tool === "mermaid") {
+        const { from, to } = editor.state.selection;
+        const selected = editor.state.doc.textBetween(from, to, "\n").trim();
+        const text = selected || "flowchart TD\nA[开始] --> B[结束]";
+        return editor
+          .chain()
+          .focus()
+          .insertContentAt(
+            { from, to },
+            {
+              type: "codeBlock",
+              attrs: { language: "mermaid" },
+              content: [{ type: "text", text }],
+            },
+          )
+          .run();
       }
       // Synchronous focus prevents a deferred toolbar focus from stealing the
       // caret after the user has already clicked another table cell.

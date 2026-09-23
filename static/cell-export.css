@@ -91,6 +91,24 @@ img {
 a {
   color: #3c643f;
 }
+.nb-mermaid {
+  overflow: auto;
+  margin: 0 0 16px;
+  break-inside: avoid;
+}
+.nb-mermaid img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+}
+.nb-mermaid-source[hidden] {
+  display: none;
+}
+.nb-mermaid-invalid .nb-mermaid-output {
+  color: #9b4c38;
+}
+
 @page {
   size: A4;
   margin: 16mm;

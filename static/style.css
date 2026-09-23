@@ -1964,6 +1964,52 @@ textarea::placeholder {
   max-width: 100%;
   overflow: auto;
 }
+.nb-mermaid {
+  margin: 14px 0;
+  padding: 18px;
+  border: 1px solid #dfe8d8;
+  border-radius: 8px;
+  background: #fbfcf8;
+  overflow: auto;
+}
+.nb-mermaid-output {
+  min-height: 28px;
+  color: #72806a;
+  font-size: 13px;
+}
+.nb-mermaid-output img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+}
+.nb-mermaid-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nb-mermaid-source[hidden] {
+  display: none;
+}
+.nb-mermaid-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.nb-mermaid-editor .nb-mermaid-source {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0 0 16px;
+}
+.nb-mermaid-dialog textarea {
+  min-height: 280px;
+  width: min(80vw, 680px);
+  font-family: Consolas, "Microsoft YaHei", monospace;
+}
+.nb-mermaid-invalid .nb-mermaid-output {
+  color: #9b4c38;
+  margin-top: 10px;
+}
+
 .nb-bottom {
   font-size: 12px;
 }

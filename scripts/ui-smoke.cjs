@@ -369,6 +369,132 @@ const assert = require("node:assert/strict");
     }
     await first.locator('[data-nb="toggle"]').click();
     assert((await area.inputValue()).includes("$a^2+b^2$"));
+    const pastedFlowchart = [
+      "flowchart TD",
+      "U[客户文字与输入图] --> API[接口服务]",
+      "```css",
+      "subgraph S[Python 业务服务]",
+      "API --> P[意图提取]",
+      "P --> R[关键词与向量检索]",
+      "R --> J[候选比较与选择]",
+      "J --> C[提示词拼装与校验]",
+      "C --> PLAN[保存生成计划]",
+      "end",
+      "DB[(SQLite 模板与业务记录)] --> R",
+      "DB --> J",
+      "DB --> C",
+      "IDX[内存向量索引] --> R",
+      "LLM[语言模型接口] --- P",
+      "LLM --- J",
+      "PLAN --> W[后台任务进程]",
+      "W --> COMFY[ComfyUI GPU 服务]",
+      "COMFY --> RESULT[视频与任务结果]",
+      "RESULT --> DB",
+      "```",
+    ].join("\n");
+    await area.fill(pastedFlowchart);
+    await area.press("Control+A");
+    await first.locator('[data-format="mermaid"]').click();
+    const mermaidSource = await area.inputValue();
+    assert(mermaidSource.startsWith("```mermaid\nflowchart TD"));
+    assert(!mermaidSource.includes("```css"));
+    await first.locator('[data-nb="toggle"]').click();
+    const diagram = first.locator(".nb-mermaid-output img");
+    await diagram.waitFor();
+    assert(
+      await diagram.evaluate((img) => img.complete && img.naturalWidth > 0),
+    );
+    assert(await first.locator('[data-nb="mermaid-edit"]').isVisible());
+    assert((await diagram.getAttribute("alt")).includes("客户文字与输入图"));
+    assert((await diagram.getAttribute("alt")).includes("ComfyUI GPU 服务"));
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      "Mermaid stays inside the mobile cell",
+    );
+    if (process.env.UI_MERMAID_CAPTURE) {
+      await page.setViewportSize({ width: 1440, height: 2500 });
+      await first
+        .locator(".nb-mermaid")
+        .screenshot({ path: process.env.UI_MERMAID_CAPTURE });
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
+    const diagramPopupPromise = page.waitForEvent("popup");
+    await first.locator('[data-nb="export-image"]').click();
+    const diagramPopup = await diagramPopupPromise;
+    const diagramErrors = [];
+    diagramPopup.on("pageerror", (error) => diagramErrors.push(error.message));
+    diagramPopup.on("requestfailed", (request) =>
+      diagramErrors.push(request.url() + ": " + request.failure()?.errorText),
+    );
+    const diagramDownload = await diagramPopup
+      .waitForEvent("download", { timeout: 15000 })
+      .catch(async (error) => {
+        throw new Error(
+          "Mermaid PNG export: " +
+            diagramPopup.url() +
+            " | " +
+            (await diagramPopup.locator("body").innerText()).slice(0, 500) +
+            " | " +
+            JSON.stringify(diagramErrors.slice(0, 5)),
+          { cause: error },
+        );
+      });
+    const diagramImagePath = path.join(root, "diagram.png");
+    await diagramDownload.saveAs(diagramImagePath);
+    assert(fs.statSync(diagramImagePath).size > 10000);
+    assert.equal(
+      await diagramPopup.locator(".nb-mermaid-output img").count(),
+      1,
+    );
+    await diagramPopup.emulateMedia({ media: "print" });
+    const diagramPdf = await diagramPopup.pdf({ preferCSSPageSize: true });
+    assert(diagramPdf.subarray(0, 5).toString() === "%PDF-");
+    assert(diagramPdf.length > 10000);
+    await diagramPopup.close();
+    await first.locator('[data-nb="toggle"]').click();
+    assert.equal(await area.inputValue(), mermaidSource);
+    await first.locator('[data-nb="toggle"]').click();
+    await first.locator('[data-nb="mermaid-edit"]').click();
+    const diagramDialog = page.locator(".nb-mermaid-dialog");
+    const updatedDiagram =
+      mermaidSource.slice("```mermaid\n".length, -"\n```".length) +
+      "\nRESULT --> CHECK[补充检查]";
+    await diagramDialog.locator("textarea").fill(updatedDiagram);
+    const diagramSaved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        (response.request().postData() || "").includes("补充检查"),
+    );
+    await diagramDialog.locator('[type="submit"]').click();
+    assert.equal((await diagramSaved).status(), 200);
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector(".nb-mermaid-editor img")
+        ?.alt.includes("补充检查"),
+    );
+    await first.locator('[data-nb="toggle"]').click();
+    assert((await area.inputValue()).includes("RESULT --> CHECK[补充检查]"));
+    const invalidDiagram = "```mermaid\nflowchart TD\nA[未闭合\n```";
+    await area.fill(invalidDiagram);
+    await first.locator('[data-nb="toggle"]').click();
+    await first.locator(".nb-mermaid-invalid").waitFor();
+    assert(
+      (await first.locator(".nb-mermaid-output").innerText()).includes(
+        "语法有误",
+      ),
+    );
+    await first.locator('[data-nb="toggle"]').click();
+    assert.equal(await area.inputValue(), invalidDiagram);
+    await area.fill("可视化插入测试");
+    await first.locator('[data-nb="toggle"]').click();
+    await first.locator('[data-format="mermaid"]').click();
+    await first.locator(".nb-mermaid-output img").waitFor();
+    await first.locator('[data-nb="toggle"]').click();
+    assert((await area.inputValue()).includes("```mermaid"));
     await area.fill(original);
     const fallbackContext = await browser.newContext({
       storageState: await page.context().storageState(),
@@ -549,7 +675,7 @@ const assert = require("node:assert/strict");
     );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 8 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math editing and save/reload; no JS page errors.",
+      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 8 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math/Mermaid editing, export and save/reload; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

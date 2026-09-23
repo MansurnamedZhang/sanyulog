@@ -11,9 +11,18 @@ await build({
   outfile: "static/vendor/rich-editor.js",
   legalComments: "linked",
 });
+await build({
+  entryPoints: ["src/mermaid-runtime.js"],
+  bundle: true,
+  format: "esm",
+  target: ["es2022"],
+  minify: true,
+  outfile: "static/vendor/mermaid-runtime.js",
+  legalComments: "linked",
+});
 const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
 const notices = [
-  "Rich editor bundled runtime dependencies. See package-lock.json for exact versions.\n",
+  "Bundled browser runtime dependencies. See package-lock.json for exact versions.\n",
 ];
 for (const [directory, info] of Object.entries(lock.packages)) {
   if (!directory || info.dev) continue;

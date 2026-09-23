@@ -33,7 +33,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: npm ci --ignore-scripts
       - run: npm run build:editor
-      - run: git diff --exit-code -- static/vendor/rich-editor.js static/vendor/rich-editor.LICENSE.txt
+      - run: git diff --exit-code -- static/vendor/rich-editor.js static/vendor/rich-editor.LICENSE.txt static/vendor/mermaid-runtime.js static/vendor/mermaid-runtime.js.LEGAL.txt
       - run: npm run check
       - run: npm run format:check
       - run: npm test

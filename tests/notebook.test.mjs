@@ -58,6 +58,38 @@ test("LaTeX renders inline and display math, but not inside code", () => {
   assert.ok(!core.renderMarkdown("价格 \\$5").includes("<math"));
   assert.doesNotThrow(() => core.renderMarkdown("$\\frac{$"));
 });
+test("Mermaid fences keep diagram text escaped and leave CSS code alone", () => {
+  const diagram = core.renderMarkdown(
+    "```mermaid\nflowchart TD\nU[客户文字与输入图] --> API[接口服务]\n```",
+  );
+  assert.match(diagram, /class="nb-mermaid"/);
+  assert.match(diagram, /flowchart TD/);
+  assert.match(diagram, /客户文字与输入图/);
+  assert.ok(!diagram.includes("<svg"));
+  const unsafe = core.renderMarkdown(
+    "```mermaid\nflowchart TD\nA[<img src=x onerror=alert(1)>] --> B\n```",
+  );
+  assert.ok(!unsafe.includes("<img"));
+  assert.match(unsafe, /&lt;img/);
+  assert.ok(
+    core
+      .renderMarkdown("```css\na { color: red }\n```")
+      .includes("<pre><code>"),
+  );
+});
+test("Mermaid toolbar wraps a selected flowchart and fixes an accidental CSS fence", () => {
+  const pasted =
+    "flowchart TD\nU --> API\n```css\nsubgraph S\n API --> P\nend\n```";
+  const result = core.formatSelection(pasted, 0, pasted.length, "mermaid");
+  assert.equal(
+    result.text.trim(),
+    "```mermaid\nflowchart TD\nU --> API\nsubgraph S\n API --> P\nend\n```",
+  );
+  assert.equal(
+    result.text.slice(result.start, result.end),
+    "flowchart TD\nU --> API\nsubgraph S\n API --> P\nend",
+  );
+});
 test(
   "IDs work with getRandomValues when randomUUID is unavailable over LAN HTTP",
   { skip: !exists },
@@ -184,13 +216,8 @@ test(
 );
 
 test("independent table view escapes values and paginates data rows", async () => {
-  const { readFileSync } = await import("node:fs");
-  const source = readFileSync(
-    new URL("../static/notebook.js", import.meta.url),
-    "utf8",
-  ).replace(/['"]\.\/notebook-core\.mjs['"]/, JSON.stringify(location.href));
   const { Notebook } = await import(
-    "data:text/javascript;base64," + Buffer.from(source).toString("base64")
+    new URL("../static/notebook.js", import.meta.url)
   );
   const notebook = Object.create(Notebook.prototype);
   notebook.tablePages = new Map();
@@ -255,13 +282,8 @@ test("Markdown renders mixed nested lists inside parent items", () => {
 });
 
 test("grid paste keeps paragraphs in one cell and still accepts Excel regions", async () => {
-  const { readFileSync } = await import("node:fs");
-  const source = readFileSync(
-    new URL("../static/notebook.js", import.meta.url),
-    "utf8",
-  ).replace(/['"]\.\/notebook-core\.mjs['"]/, JSON.stringify(location.href));
   const { Notebook } = await import(
-    "data:text/javascript;base64," + Buffer.from(source).toString("base64")
+    new URL("../static/notebook.js", import.meta.url)
   );
   const notebook = Object.create(Notebook.prototype);
   const cell = {

@@ -1,3 +1,4 @@
+import { renderMermaid } from "./mermaid-renderer.js";
 import {
   newId,
   Autosave,
@@ -178,7 +179,7 @@ export class Notebook {
         )
         .join("")}</select></label></div></div></details>
       <div class="nb-toolbar"><div><span class="insert-label">插入</span><button class="button small" data-nb="add" data-type="markdown">＋ 文本</button><button class="button small" data-nb="add" data-type="code">＋ 代码</button><button class="button small" data-nb="add" data-type="log">＋ 日志</button><button class="button small" data-nb="add" data-type="file">＋ 附件</button><button class="button small" data-nb="add" data-type="table">＋ 表格</button></div><button class="text-button" data-nb="help">使用帮助</button></div>
-      <div class="nb-help" data-help hidden><b>像笔记本一样，持续记录</b><p>源码模式 Shift+Enter：保存并进入下一格 · Ctrl+S：立即保存 · 代码格内 Tab：缩进。空闲 0.8 秒后自动保存。</p><p>手动切换源码 / 所见即所得；点击其他块不会改变模式。所见即所得可直接编辑文字和表格，点击公式可修改 LaTeX。表格内 Enter 换段，Shift+Enter 换行，Tab 切换单元格。</p><p>Markdown：# 标题、**加粗**、- 列表、[链接](https://...)、表格和三反引号代码块。代码格用于记录；运行结果可放在下一格日志中。支持粘贴图片或上传任意文件。</p></div>
+      <div class="nb-help" data-help hidden><b>像笔记本一样，持续记录</b><p>源码模式 Shift+Enter：保存并进入下一格 · Ctrl+S：立即保存 · 代码格内 Tab：缩进。空闲 0.8 秒后自动保存。</p><p>手动切换源码 / 所见即所得；点击其他块不会改变模式。所见即所得可直接编辑文字和表格，点击公式可修改 LaTeX。表格内 Enter 换段，Shift+Enter 换行，Tab 切换单元格。</p><p>Markdown：# 标题、**加粗**、- 列表、[链接](https://...)、表格和三反引号代码块。流程图请用 Mermaid 代码块：三反引号加 mermaid 开始，三反引号结束；也可选中图定义点击「流程图」。代码格用于记录；运行结果可放在下一格日志中。支持粘贴图片或上传任意文件。</p></div>
       <div class="nb-cells" data-cells></div><div class="nb-end"><span>继续记下一个想法</span><div><button class="button" data-nb="append" data-type="markdown">＋ 文本单元</button><button class="button subtle" data-nb="append" data-type="code">＋ 代码</button><button class="button subtle" data-nb="append" data-type="file">＋ 图片 / 附件</button><button class="button subtle" data-nb="append" data-type="table">＋ 表格</button></div></div>
       <div class="nb-bottom"><span data-upload-status></span><button class="text-button" data-nb="undo" hidden>↶ 撤销删除单元格</button></div><details class="nb-library"><summary>本笔记本的全部附件 <span>${this.record.attachments.length}</span></summary><div data-library></div></details><input type="file" data-file-input multiple hidden>`;
     if (d._paramRows)
@@ -228,6 +229,7 @@ export class Notebook {
         ["outdent", "← 缩进", "减少缩进"],
         ["code", "&lt;/&gt;", "行内代码"],
         ["codeblock", "代码块", "代码块"],
+        ["mermaid", "◇ 流程图", "插入 Mermaid 流程图"],
         ["table", "▦ 表格", "插入表格"],
         ["math", "x²", "行内公式"],
         ["mathblock", "∑ 公式", "独立公式"],
@@ -250,12 +252,17 @@ export class Notebook {
         const id = host.closest("[data-cell]").dataset.cell;
         const cell = this.cell(id);
         host.textContent = "";
-        const instance = createRichEditor(host, cell.source, (source) => {
-          const current = this.cell(id);
-          if (!current || this.controller.signal.aborted) return;
-          current.source = source;
-          this.queue.change({ cells: this.queue.data.cells });
-        });
+        const instance = createRichEditor(
+          host,
+          cell.source,
+          (source) => {
+            const current = this.cell(id);
+            if (!current || this.controller.signal.aborted) return;
+            current.source = source;
+            this.queue.change({ cells: this.queue.data.cells });
+          },
+          renderMermaid,
+        );
         this.richEditors.set(id, instance);
         if (id === focusId) instance.focus();
       }

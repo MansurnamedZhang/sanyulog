@@ -190,6 +190,24 @@ function formatListLines(text, start, end, tool) {
 export function formatSelection(text, start, end, tool) {
   if (["list", "unordered", "ordered", "indent", "outdent"].includes(tool))
     return formatListLines(text, start, end, tool);
+  if (tool === "mermaid") {
+    const selected = text.slice(start, end);
+    const content = (selected || "flowchart TD\nA[开始] --> B[结束]")
+      .replace(/^[ \t]*```(?:css|mermaid)?[ \t]*(?:\r?\n|$)/gim, "")
+      .trim();
+    const fence = "`".repeat(
+      Math.max(3, ...(content.match(/`+/g) || []).map((run) => run.length + 1)),
+    );
+    const before =
+      (start && text[start - 1] !== "\n" ? "\n" : "") + fence + "mermaid\n";
+    const after =
+      "\n" + fence + (end < text.length && text[end] !== "\n" ? "\n" : "");
+    return {
+      text: text.slice(0, start) + before + content + after + text.slice(end),
+      start: start + before.length,
+      end: start + before.length + content.length,
+    };
+  }
   const formats = {
     bold: ["**", "**", "加粗文字"],
     italic: ["*", "*", "斜体文字"],
@@ -319,7 +337,16 @@ export function renderMarkdown(source) {
       )
         code.push(lines[i++]);
       if (i < lines.length) i++;
-      html.push("<pre><code>" + escapeHTML(code.join("\n")) + "</code></pre>");
+      if (fence[2].trim().toLowerCase() === "mermaid")
+        html.push(
+          '<div class="nb-mermaid" aria-label="Mermaid 流程图"><pre class="nb-mermaid-source">' +
+            escapeHTML(code.join("\n")) +
+            "</pre></div>",
+        );
+      else
+        html.push(
+          "<pre><code>" + escapeHTML(code.join("\n")) + "</code></pre>",
+        );
       continue;
     }
     if (line.trim().startsWith("$$") || line.trim().startsWith("\\[")) {

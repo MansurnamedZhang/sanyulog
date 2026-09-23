@@ -1,4 +1,5 @@
 import { renderMarkdown } from "./notebook-core.mjs";
+import { renderMermaidDiagrams } from "./mermaid-renderer.js";
 import "./vendor/html-to-image.js";
 const content = document.querySelector("#content");
 const status = document.querySelector("#status");
@@ -49,8 +50,10 @@ try {
     (title || "笔记").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 100) +
     "-单元格";
   document.title = filename;
-  if (cell.type === "markdown") content.innerHTML = renderMarkdown(cell.source);
-  else {
+  if (cell.type === "markdown") {
+    content.innerHTML = renderMarkdown(cell.source);
+    await renderMermaidDiagrams(content);
+  } else {
     const pre = document.createElement("pre");
     pre.textContent = cell.source;
     content.append(pre);
