@@ -152,6 +152,8 @@ const assert = require("node:assert/strict");
     assert(pdfBytes.length > 10000);
     await exported.close();
     for (const [width, height] of [
+      [2560, 1440],
+      [1920, 1080],
       [1440, 1000],
       [1280, 900],
       [1024, 768],
@@ -165,13 +167,32 @@ const assert = require("node:assert/strict");
         bounds.width > width * 0.4,
         `Cell width ${bounds.width} at ${width}`,
       );
+      if (width >= 1920) {
+        assert(
+          bounds.width > (width === 2560 ? 1700 : 1100),
+          `Wide-screen cell width ${bounds.width} at ${width}`,
+        );
+        assert(
+          (await page.locator(".record-pane").boundingBox()).width >= 330,
+          `Wide-screen record pane at ${width}`,
+        );
+      }
       assert(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
         `Overflow ${width}`,
       );
+      if (width === 2560 && process.env.UI_WIDE_CAPTURE)
+        await page.screenshot({ path: process.env.UI_WIDE_CAPTURE });
     }
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.locator("[data-action=focus-mode]").click();
+    assert(
+      (await page.locator(".nb-cell-main").first().boundingBox()).width > 1700,
+      "Wide-screen focus mode uses the available width",
+    );
+    await page.locator("[data-action=focus-mode]").click();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("[data-action=focus-mode]").click();
     assert(await page.locator(".record-pane").isHidden());
@@ -528,7 +549,7 @@ const assert = require("node:assert/strict");
     );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 6 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math editing and save/reload; no JS page errors.",
+      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 8 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math editing and save/reload; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

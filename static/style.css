@@ -1987,6 +1987,21 @@ textarea::placeholder {
   padding-left: max(24px, calc((100vw - 950px) / 2));
   padding-right: max(24px, calc((100vw - 950px) / 2));
 }
+@media (min-width: 1600px) {
+  .workspace {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+  .workbench {
+    grid-template-columns: 330px minmax(0, 1fr);
+  }
+  .detail > :not(.empty) {
+    max-width: 1760px;
+  }
+  .focus-mode .detail {
+    padding-left: clamp(32px, 3vw, 72px);
+    padding-right: clamp(32px, 3vw, 72px);
+  }
+}
 @media (min-width: 1101px) and (max-width: 1300px) {
   .workspace {
     grid-template-columns: 190px minmax(0, 1fr);
