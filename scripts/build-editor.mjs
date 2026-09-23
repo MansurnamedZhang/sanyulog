@@ -21,6 +21,10 @@ await build({
   legalComments: "linked",
 });
 const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+const stableLicenses = {
+  "@iconify/types": "scripts/vendor-licenses/iconify-types.txt",
+  "@iconify/utils": "scripts/vendor-licenses/iconify-utils.txt",
+};
 const notices = [
   "Bundled browser runtime dependencies. See package-lock.json for exact versions.\n",
 ];
@@ -34,11 +38,12 @@ for (const [directory, info] of Object.entries(lock.packages)) {
     "license.md",
     "LICENSE-MIT",
   ];
-  const license = candidates
-    .map((name) => path.join(directory, name))
-    .find(existsSync);
+  const packageName = directory.replace(/^node_modules\//, "");
+  const license =
+    stableLicenses[packageName] ||
+    candidates.map((name) => path.join(directory, name)).find(existsSync);
   notices.push(
-    `${directory.replace(/^node_modules\//, "")} ${info.version} (${info.license || "see license"})\n${license ? readFileSync(license, "utf8") : "Refer to upstream package license."}`,
+    `${packageName} ${info.version} (${info.license || "see license"})\n${license ? readFileSync(license, "utf8") : "Refer to upstream package license."}`,
   );
 }
 writeFileSync(
