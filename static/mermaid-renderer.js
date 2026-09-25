@@ -1,3 +1,5 @@
+import { normalizeMermaidDefinition } from "./mermaid-source.mjs";
+
 let runtime;
 let nextId = 0;
 const MAX_SOURCE_LENGTH = 50000;
@@ -34,13 +36,20 @@ export async function renderMermaid(container, source) {
   }
   try {
     const { renderDiagram } = await getRuntime();
-    const { svg } = await renderDiagram(`nb-mermaid-${++nextId}`, source);
+    const { svg } = await renderDiagram(
+      `nb-mermaid-${++nextId}`,
+      normalizeMermaidDefinition(source),
+    );
     if (container.mermaidRevision !== revision || !container.isConnected)
       return;
     // An SVG used as an image applies its own styles under the current CSP and
     // cannot run diagram-authored scripts in the page.
     const image = document.createElement("img");
-    image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    // Mermaid can emit HTML <br> inside foreignObject. SVG-as-image is XML,
+    // so these void tags must be self-closing before browser decoding.
+    const imageSvg = svg.replace(/<br>/gi, "<br/>");
+    image.src =
+      "data:image/svg+xml;charset=utf-8," + encodeURIComponent(imageSvg);
     image.alt = "Mermaid 流程图：" + source.slice(0, 1000);
     const width = Number(
       svg.match(/viewBox="[\d.-]+\s+[\d.-]+\s+([\d.]+)/)?.[1],

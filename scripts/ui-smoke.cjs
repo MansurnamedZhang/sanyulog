@@ -478,6 +478,45 @@ const assert = require("node:assert/strict");
     );
     await first.locator('[data-nb="toggle"]').click();
     assert((await area.inputValue()).includes("RESULT --> CHECK[补充检查]"));
+    const escapedDiagram = [
+      "```mermaid",
+      "flowchart TD",
+      '&#x20;   A["客户原话"] --> B["第一轮大模型\\<br/>提取动作、修饰、限制和证据"]',
+      '&#x20;   B --> C["程序生成检索条件\\<br/>提及内容 + 类型 + 相关上下文"]',
+      '&#x20;   D["完整概念库\\<br/>长期保存在服务端"] --> E["关键词检索 + 向量检索"]',
+      "&#x20;   C --> E",
+      '&#x20;   E --> F["每条提及保留少量候选\\<br/>过滤、合并、去重"]',
+      '&#x20;   F --> G["第二轮大模型\\<br/>一次处理本次所有提及"]',
+      '&#x20;   G --> H["标准化结果"]',
+      '&#x20;   G -->|"没有合适候选"| I["有界扩大检索\\<br/>仍不匹配则保留未知"]',
+      "```",
+    ].join("\n");
+    await area.fill(escapedDiagram);
+    await first.locator('[data-nb="toggle"]').click();
+    await first.locator(".nb-mermaid-output").waitFor();
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector(".nb-mermaid-output img, .nb-mermaid-invalid"),
+    );
+    assert.equal(
+      await first.locator(".nb-mermaid-invalid").count(),
+      0,
+      await first.locator(".nb-mermaid-output").innerText(),
+    );
+    await first.locator(".nb-mermaid-output img").waitFor();
+    const escapedPopupPromise = page.waitForEvent("popup");
+    await first.locator('[data-nb="export-image"]').click();
+    const escapedPopup = await escapedPopupPromise;
+    const escapedDownload = await escapedPopup.waitForEvent("download");
+    const escapedImagePath = path.join(root, "escaped-diagram.png");
+    await escapedDownload.saveAs(escapedImagePath);
+    assert(fs.statSync(escapedImagePath).size > 10000);
+    await escapedPopup.close();
+    if (process.env.UI_MERMAID_ESCAPED_CAPTURE)
+      await first.locator(".nb-mermaid").screenshot({
+        path: process.env.UI_MERMAID_ESCAPED_CAPTURE,
+      });
+    await first.locator('[data-nb="toggle"]').click();
     const invalidDiagram = "```mermaid\nflowchart TD\nA[未闭合\n```";
     await area.fill(invalidDiagram);
     await first.locator('[data-nb="toggle"]').click();

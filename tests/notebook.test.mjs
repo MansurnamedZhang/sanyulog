@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import {
+  normalizeMermaidDefinition,
+  normalizeMermaidFences,
+} from "../static/mermaid-source.mjs";
 const location = new URL("../static/notebook-core.mjs", import.meta.url);
 const exists = existsSync(location);
 const core = exists ? await import(location) : {};
@@ -76,6 +80,20 @@ test("Mermaid fences keep diagram text escaped and leave CSS code alone", () => 
       .renderMarkdown("```css\na { color: red }\n```")
       .includes("<pre><code>"),
   );
+});
+test("pasted Mermaid indentation is normalized without changing labels or other code", () => {
+  const diagram =
+    'flowchart TD\n&#x20;   A["客户原话"] --> B["甲\\<br/>乙"]\nA --> C["&#x20;保留"]';
+  const expected = diagram.replace("&#x20;   A", "    A");
+  assert.equal(normalizeMermaidDefinition(diagram), expected);
+  assert.equal(
+    normalizeMermaidFences(
+      `正文\n\`\`\`css\n&#x20; color: red\n\`\`\`\n\`\`\`mermaid\n${diagram}\n\`\`\``,
+    ),
+    `正文\n\`\`\`css\n&#x20; color: red\n\`\`\`\n\`\`\`mermaid\n${expected}\n\`\`\``,
+  );
+  const converted = core.formatSelection(diagram, 0, diagram.length, "mermaid");
+  assert.equal(converted.text.slice(converted.start, converted.end), expected);
 });
 test("Mermaid toolbar wraps a selected flowchart and fixes an accidental CSS fence", () => {
   const pasted =

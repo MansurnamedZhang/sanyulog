@@ -1,3 +1,4 @@
+import { normalizeMermaidDefinition } from "./mermaid-source.mjs";
 import katex from "./vendor/katex.mjs";
 
 export function parseCSV(text, delimiter = ",") {
@@ -192,9 +193,11 @@ export function formatSelection(text, start, end, tool) {
     return formatListLines(text, start, end, tool);
   if (tool === "mermaid") {
     const selected = text.slice(start, end);
-    const content = (selected || "flowchart TD\nA[开始] --> B[结束]")
-      .replace(/^[ \t]*```(?:css|mermaid)?[ \t]*(?:\r?\n|$)/gim, "")
-      .trim();
+    const content = normalizeMermaidDefinition(
+      (selected || "flowchart TD\nA[开始] --> B[结束]")
+        .replace(/^[ \t]*```(?:css|mermaid)?[ \t]*(?:\r?\n|$)/gim, "")
+        .trim(),
+    );
     const fence = "`".repeat(
       Math.max(3, ...(content.match(/`+/g) || []).map((run) => run.length + 1)),
     );

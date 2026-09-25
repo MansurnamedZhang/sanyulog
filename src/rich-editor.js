@@ -1,3 +1,4 @@
+import { normalizeMermaidFences } from "../static/mermaid-source.mjs";
 import { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
@@ -200,7 +201,7 @@ export function createRichEditor(element, source, onChange, renderDiagram) {
         onClick: (node, pos) => editFormula(true, node, pos),
       }),
     ],
-    content: source,
+    content: normalizeMermaidFences(source),
     contentType: "markdown",
     editorProps: {
       attributes: {
