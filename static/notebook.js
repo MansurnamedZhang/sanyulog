@@ -156,7 +156,7 @@ export class Notebook {
   render() {
     const d = this.queue.data;
     this.root.classList.add("notebook-detail");
-    this.root.innerHTML = `<div class="nb-header"><div class="nb-caption">过程笔记</div><div class="detail-actions"><button class="button small" data-action="export">导出笔记</button><details class="note-menu"><summary>更多操作</summary><div class="note-menu-panel"><button data-action="duplicate">复制笔记</button><button data-action="compare">对比记录</button><button class="danger" data-action="delete-record">删除笔记</button></div></details></div></div>
+    this.root.innerHTML = `<div class="nb-header"><div class="nb-caption">过程笔记</div><div class="detail-actions"><button class="button small" data-action="export">导出笔记</button><button class="button small" data-nb="export-notebook-pdf">整页 PDF</button><details class="note-menu"><summary>更多操作</summary><div class="note-menu-panel"><button data-action="duplicate">复制笔记</button><button data-action="compare">对比记录</button><button class="danger" data-action="delete-record">删除笔记</button></div></details></div></div>
       <input class="nb-title" data-meta="title" maxlength="300" aria-label="笔记本标题" value="${esc(d.title)}" placeholder="未命名笔记本">
       <div class="nb-subtitle"><span data-save-status data-state="saved">已保存</span><span data-cell-count>${d.cells.length} 个单元格</span></div>
       <div class="nb-error" data-save-error hidden><span data-error-message></span><div><button class="button small" data-nb="save">重试保存</button><button class="button small" data-nb="download-draft">下载草稿</button><button class="button small" data-nb="reload">载入已保存内容</button></div></div>
@@ -536,6 +536,28 @@ export class Notebook {
     const action = button.dataset.nb,
       id = button.closest("[data-cell]")?.dataset.cell;
     if (id) this.setActive(id);
+    if (action === "export-notebook-pdf") {
+      const key = "cell-export-" + newId();
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          notebook: this.queue.data,
+          attachments: this.record.attachments,
+          relatedTitle:
+            this.records.find(
+              (record) => record.id === this.queue.data.related_id,
+            )?.title || "",
+          mode: "pdf",
+        }),
+      );
+      const popup = window.open("/cell-export.html#" + key, "_blank");
+      if (!popup) {
+        sessionStorage.removeItem(key);
+        throw new Error("请允许弹出窗口后重试导出");
+      }
+      setTimeout(() => sessionStorage.removeItem(key), 60000);
+      return;
+    }
     if (action === "export-image" || action === "export-pdf") {
       const key = "cell-export-" + newId();
       sessionStorage.setItem(

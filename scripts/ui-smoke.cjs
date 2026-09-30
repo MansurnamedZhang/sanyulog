@@ -151,6 +151,38 @@ const assert = require("node:assert/strict");
     assert(pdfBytes.subarray(0, 5).toString() === "%PDF-");
     assert(pdfBytes.length > 10000);
     await exported.close();
+    const notebookPdfPopupPromise = page.waitForEvent("popup");
+    await page.locator('[data-nb="export-notebook-pdf"]').click();
+    const notebookPdfPopup = await notebookPdfPopupPromise;
+    await notebookPdfPopup
+      .locator("#content .nb-export-cell")
+      .first()
+      .waitFor();
+    assert.equal(
+      await notebookPdfPopup.locator("#content .nb-export-cell").count(),
+      4,
+    );
+    assert.equal(
+      await notebookPdfPopup.locator("#content h1").innerText(),
+      await page.locator(".nb-title").inputValue(),
+    );
+    assert(
+      (await notebookPdfPopup.locator("#content").innerText()).includes(
+        "learning_rate",
+      ),
+    );
+    assert(
+      (await notebookPdfPopup.locator("#content").innerText()).includes("基线"),
+    );
+    await notebookPdfPopup.emulateMedia({ media: "print" });
+    const wholePdfBytes = await notebookPdfPopup.pdf({
+      preferCSSPageSize: true,
+    });
+    assert(wholePdfBytes.subarray(0, 5).toString() === "%PDF-");
+    assert(wholePdfBytes.length > pdfBytes.length);
+    if (process.env.UI_PAGE_PDF_CAPTURE)
+      fs.writeFileSync(process.env.UI_PAGE_PDF_CAPTURE, wholePdfBytes);
+    await notebookPdfPopup.close();
     for (const [width, height] of [
       [2560, 1440],
       [1920, 1080],
@@ -420,6 +452,22 @@ const assert = require("node:assert/strict");
         .screenshot({ path: process.env.UI_MERMAID_CAPTURE });
       await page.setViewportSize({ width: 390, height: 844 });
     }
+    const fullDiagramPopupPromise = page.waitForEvent("popup");
+    await page.locator('[data-nb="export-notebook-pdf"]').click();
+    const fullDiagramPopup = await fullDiagramPopupPromise;
+    const fullDiagramImage = fullDiagramPopup.locator(".nb-mermaid-output img");
+    await fullDiagramImage.waitFor();
+    assert(
+      await fullDiagramImage.evaluate(
+        (img) => img.complete && img.naturalWidth > 0,
+      ),
+    );
+    await fullDiagramPopup.emulateMedia({ media: "print" });
+    const fullDiagramPdf = await fullDiagramPopup.pdf({
+      preferCSSPageSize: true,
+    });
+    assert(fullDiagramPdf.subarray(0, 5).toString() === "%PDF-");
+    await fullDiagramPopup.close();
     const diagramPopupPromise = page.waitForEvent("popup");
     await first.locator('[data-nb="export-image"]').click();
     const diagramPopup = await diagramPopupPromise;

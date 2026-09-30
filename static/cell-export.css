@@ -109,6 +109,77 @@ a {
   color: #9b4c38;
 }
 
+#png[hidden] {
+  display: none;
+}
+.nb-export-notebook > h1 {
+  margin: 0 0 22px;
+  font-size: 28px;
+  color: #253e35;
+}
+.nb-export-properties {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 22px;
+  margin: 0 0 24px;
+}
+.nb-export-properties > div {
+  min-width: 0;
+}
+.nb-export-properties dt {
+  color: #6a786b;
+  font-size: 12px;
+}
+.nb-export-properties dd {
+  margin: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.nb-export-config {
+  margin: 22px 0;
+}
+.nb-export-config > h2 {
+  font-size: 18px;
+}
+.nb-export-cell {
+  border-top: 1px solid #dce4d6;
+  padding: 20px 0 12px;
+}
+.nb-export-cell-heading {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #61735f;
+  break-after: avoid;
+}
+.nb-export-cell-heading small {
+  font-size: 11px;
+  font-weight: normal;
+}
+.nb-export-attachment {
+  margin: 12px 0;
+  break-inside: avoid;
+}
+.nb-export-attachment img {
+  display: block;
+  max-height: 220mm;
+  object-fit: contain;
+  margin: 0 0 6px;
+}
+.nb-export-table thead {
+  display: table-header-group;
+}
+.nb-export-table tr {
+  break-inside: avoid;
+}
+@media screen and (max-width: 850px) {
+  article {
+    width: 100%;
+    padding: 22px;
+  }
+  .nb-export-properties {
+    grid-template-columns: 1fr;
+  }
+}
 @page {
   size: A4;
   margin: 16mm;

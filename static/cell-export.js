@@ -1,4 +1,5 @@
 import { renderMarkdown } from "./notebook-core.mjs";
+import { renderNotebookHTML } from "./notebook-export.mjs";
 import { renderMermaidDiagrams } from "./mermaid-renderer.js";
 import "./vendor/html-to-image.js";
 const content = document.querySelector("#content");
@@ -45,24 +46,37 @@ try {
   }
   history.replaceState(null, "", location.pathname);
   if (!raw) throw new Error("导出内容已过期，请从单元格重新导出。");
-  const { cell, title, mode } = JSON.parse(raw);
+  const { cell, notebook, attachments, relatedTitle, title, mode } =
+    JSON.parse(raw);
   filename =
-    (title || "笔记").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 100) +
-    "-单元格";
+    (notebook?.title || title || "笔记")
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
+      .slice(0, 100) + (notebook ? "-整页" : "-单元格");
   document.title = filename;
-  if (cell.type === "markdown") {
+  if (notebook) {
+    document.querySelector("header strong").textContent = "整页 PDF 导出";
+    png.hidden = true;
+    content.innerHTML = renderNotebookHTML(notebook, attachments, relatedTitle);
+    await renderMermaidDiagrams(content);
+    await Promise.all(
+      [...content.querySelectorAll("img")].map((image) =>
+        image.decode().catch(() => {}),
+      ),
+    );
+  } else if (cell?.type === "markdown") {
     content.innerHTML = renderMarkdown(cell.source);
     await renderMermaidDiagrams(content);
-  } else {
+  } else if (cell) {
     const pre = document.createElement("pre");
     pre.textContent = cell.source;
     content.append(pre);
-  }
+  } else throw new Error("导出内容无效，请从笔记重新导出。");
   png.addEventListener("click", downloadImage);
   pdf.addEventListener("click", () => window.print());
   await document.fonts.ready;
-  status.textContent =
-    "仅导出当前单元格正文。PDF 请在打印窗口中选择“另存为 PDF”。";
+  status.textContent = notebook
+    ? "已准备完整笔记。请在打印窗口中选择“另存为 PDF”。"
+    : "仅导出当前单元格正文。PDF 请在打印窗口中选择“另存为 PDF”。";
   if (mode === "image") await downloadImage();
   else window.print();
 } catch (error) {

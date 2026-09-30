@@ -381,3 +381,56 @@ test("visual table line breaks render safely in exported Markdown", () => {
   assert.ok(rendered.includes("第一段<br>第二段<br><br>第三段"));
   assert.ok(!rendered.includes("<script>"));
 });
+
+test("whole-notebook export includes metadata and every CSV row in order", async () => {
+  const { renderNotebookHTML } = await import("../static/notebook-export.mjs");
+  const rows = [
+    "名称,数值",
+    ...Array.from({ length: 55 }, (_, i) => `条目${i + 1},${i + 1}`),
+  ].join("\n");
+  const html = renderNotebookHTML(
+    {
+      title: "完整笔记 <测试>",
+      status: "进行中",
+      tags: ["实验"],
+      goal: "记录全程",
+      params: { rank: "32" },
+      result: "已完成",
+      conclusion: "继续观察",
+      next_step: "复查",
+      cells: [
+        { type: "markdown", source: "## 第一节\n正文" },
+        { type: "table", source: rows },
+        { type: "code", language: "python", source: "print(1)" },
+        { type: "log", source: "运行结果" },
+      ],
+    },
+    [],
+  );
+  assert.match(html, /完整笔记 &lt;测试&gt;/);
+  assert.match(html, /记录全程/);
+  assert.match(html, /rank/);
+  assert.match(html, /<h2>第一节<\/h2>/);
+  assert.match(html, /条目55/);
+  assert.equal((html.match(/<tr>/g) || []).length, 56);
+  assert(html.indexOf("正文") < html.indexOf("条目55"));
+  assert(html.indexOf("条目55") < html.indexOf("print(1)"));
+  assert.match(html, /运行结果/);
+  const withFiles = renderNotebookHTML(
+    {
+      title: "附件",
+      cells: [
+        { type: "file", source: "", attachment_ids: ["photo-id", "report-id"] },
+      ],
+    },
+    [
+      { id: "photo-id", name: "图像.png", mime: "image/png" },
+      { id: "report-id", name: "报告.pdf", mime: "application/pdf" },
+      { id: "orphan-id", name: "未插入.csv", mime: "text/csv" },
+    ],
+  );
+  assert.match(withFiles, /<img src="\/api\/attachments\/photo-id\?preview=1"/);
+  assert.match(withFiles, /报告\.pdf/);
+  assert.match(withFiles, /其他附件/);
+  assert.match(withFiles, /未插入\.csv/);
+});
