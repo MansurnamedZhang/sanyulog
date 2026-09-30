@@ -677,6 +677,41 @@ const assert = require("node:assert/strict");
       neighbor,
     );
 
+    await page.locator('[data-nb="append"][data-type="table"]').click();
+    const singleColumnId = await page
+      .locator(".nb-cell")
+      .last()
+      .getAttribute("data-cell");
+    const singleColumn = page.locator(`[data-cell="${singleColumnId}"]`);
+    for (let i = 0; i < 2; i++) {
+      page.once("dialog", (dialog) => dialog.accept());
+      await singleColumn
+        .locator('[data-nb="grid-delete-column"]')
+        .last()
+        .click();
+    }
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn.locator('[data-nb="grid-delete-row"]').last().click();
+    assert.match(await singleColumn.innerText(), /1 行 × 1 列/);
+    const singleColumnSaved = page.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        response.url().includes("/api/records/") &&
+        response.status() === 200,
+    );
+    await singleColumn.locator('[data-nb="grid-add-row"]').click();
+    assert.match(await singleColumn.innerText(), /2 行 × 1 列/);
+    await singleColumn.locator('[data-nb="grid-add-row"]').click();
+    assert.match(await singleColumn.innerText(), /3 行 × 1 列/);
+    await singleColumnSaved;
+    await page.locator('[data-save-status][data-state="saved"]').waitFor();
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.match(
+      await page.locator(`[data-cell="${singleColumnId}"]`).innerText(),
+      /3 行 × 1 列/,
+    );
+
     await page.locator("#detail").evaluate((e) => (e.scrollTop = 0));
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });

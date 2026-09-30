@@ -23,6 +23,10 @@ test("CSV table preserves commas, quotes, multiline values, BOM and empty cells"
   assert.deepEqual(core.parseCSV(core.serializeCSV(rows)), rows);
   assert.throws(() => core.parseCSV('a,"broken'));
 });
+test("single-column table preserves newly added empty rows", () => {
+  const rows = [["TemplateId"], [""], [""]];
+  assert.deepEqual(core.parseCSV(core.serializeCSV(rows)), rows);
+});
 test("table template has requested columns and body rows", () => {
   assert.equal(typeof core.createTable, "function");
   const result = core.createTable(2, 3);

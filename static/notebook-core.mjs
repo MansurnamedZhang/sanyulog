@@ -56,7 +56,7 @@ export function serializeCSV(rows) {
       row
         .map((value) => {
           value = String(value);
-          return /[,"\r\n]/.test(value)
+          return (row.length === 1 && value === "") || /[,"\r\n]/.test(value)
             ? '"' + value.replaceAll('"', '""') + '"'
             : value;
         })
