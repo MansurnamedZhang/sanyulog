@@ -101,6 +101,25 @@ export function copyTableSelection(rows, axis, indices, includeHeader = false) {
   return serializeCSV(values, "\t");
 }
 
+export function deleteTableSelection(rows, axis, indices) {
+  if (axis !== "row" && axis !== "column") throw new Error("请选择行或列");
+  const selected = new Set(indices),
+    isRow = axis === "row",
+    size = isRow ? rows.length : rows[0].length;
+  if (!selected.size) throw new Error("请先选择需要删除的行或列");
+  if (
+    [...selected].some(
+      (i) => !Number.isInteger(i) || i < (isRow ? 1 : 0) || i >= size,
+    )
+  )
+    throw new Error("选择超出表格范围，请重新选择");
+  if (!isRow && selected.size === size)
+    throw new Error("至少保留一列，请取消选择一列后再删除");
+  return isRow
+    ? rows.filter((_, i) => !selected.has(i)).map((row) => [...row])
+    : rows.map((row) => row.filter((_, i) => !selected.has(i)));
+}
+
 export function createTable(rows = 3, columns = 3) {
   if (
     !Number.isInteger(rows) ||

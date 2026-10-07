@@ -2869,6 +2869,22 @@ textarea::placeholder {
   background: #e8f0e0;
   color: #47683d;
 }
+.nb-cell-table .nb-grid-delete-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  border: 1px solid #eadbd4;
+  border-radius: 6px;
+  background: #fff;
+  color: #9b6656;
+}
+.nb-cell-table .nb-grid-delete-selection:hover {
+  background: #faf0ec;
+  border-color: #d6b4a7;
+}
 .nb-grid-help > summary {
   width: 28px;
   padding: 5px;
@@ -2999,6 +3015,9 @@ textarea::placeholder {
   }
   .nb-cell-table .nb-grid-selection-state {
     gap: 5px;
+  }
+  .nb-grid-context-actions {
+    gap: 4px;
   }
   .nb-grid-selection-hint {
     gap: 3px;

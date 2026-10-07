@@ -10,6 +10,7 @@ import {
   serializeCSV,
   insertTableDimension,
   copyTableSelection,
+  deleteTableSelection,
 } from "./notebook-core.mjs";
 const $ = (s, r) => r.querySelector(s),
   $$ = (s, r) => [...r.querySelectorAll(s)];
@@ -385,7 +386,7 @@ export class Notebook {
       selected?.axis === axis && selected.indices.has(index);
     const rowHTML = (row, r) =>
       `<tr><th>${r === 0 ? '<span class="nb-grid-corner">#</span>' : `<button class="nb-grid-select-row" data-nb="grid-select-row" data-row="${r}" aria-label="选择第 ${r} 行" aria-pressed="${!!isSelected("row", r)}" title="选择第 ${r} 行，Shift 连选">${r}</button>`}</th>${row.map((v, c) => `<td class="${isSelected("row", r) || isSelected("column", c) ? "nb-grid-selected" : ""}"><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="nb-grid-select-column" data-nb="grid-select-column" data-column="${c}" aria-label="选择第 ${c + 1} 列" aria-pressed="${!!isSelected("column", c)}" title="选择第 ${c + 1} 列，Shift 连选">${tableIcon(isSelected("column", c) ? "check" : "square")}</button><button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列" aria-label="删除第 ${c + 1} 列">${tableIcon("trash")}</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行" aria-label="删除第 ${r} 行">${tableIcon("trash")}</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
-    return `<div class="nb-grid-tools nb-grid-primary-tools"><div class="nb-grid-add-tools" aria-label="添加行列"><button class="button small" data-nb="grid-add-row">${tableIcon("plus")}添加行</button><button class="button small" data-nb="grid-add-column">${tableIcon("column")}添加列</button></div><span class="nb-grid-size">${rows.length - 1} 行 × ${rows[0].length} 列</span><div class="nb-grid-file-tools"><button class="button small" data-nb="grid-import" title="导入 CSV / TSV">${tableIcon("upload")}导入</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">${tableIcon("download")}导出 CSV</button><details class="nb-grid-menu nb-grid-help"><summary aria-label="表格使用帮助" title="表格使用帮助">${tableIcon("help")}</summary><div class="nb-grid-menu-panel"><b>表格操作</b><p>点击行号或列头选择，按住 <kbd>Shift</kbd> 连选；选区工具可定位插入、复制数据。</p><p>回车或粘贴多段文字保留在当前格。Excel 区域按多格粘贴；CSV / TSV 使用导入。</p><small>最多 1000 行数据、50 列。第一行为表头。</small></div></details></div></div>${this.tableSelectionTools(cell)}<div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
+    return `<div class="nb-grid-tools nb-grid-primary-tools"><div class="nb-grid-add-tools" aria-label="添加行列"><button class="button small" data-nb="grid-add-row">${tableIcon("plus")}添加行</button><button class="button small" data-nb="grid-add-column">${tableIcon("column")}添加列</button></div><span class="nb-grid-size">${rows.length - 1} 行 × ${rows[0].length} 列</span><div class="nb-grid-file-tools"><button class="button small" data-nb="grid-import" title="导入 CSV / TSV">${tableIcon("upload")}导入</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">${tableIcon("download")}导出 CSV</button><details class="nb-grid-menu nb-grid-help"><summary aria-label="表格使用帮助" title="表格使用帮助">${tableIcon("help")}</summary><div class="nb-grid-menu-panel"><b>表格操作</b><p>点击行号或列头选择，按住 <kbd>Shift</kbd> 连选；选区工具可定位插入、复制或批量删除数据。</p><p>回车或粘贴多段文字保留在当前格。Excel 区域按多格粘贴；CSV / TSV 使用导入。</p><small>最多 1000 行数据、50 列。第一行为表头。</small></div></details></div></div>${this.tableSelectionTools(cell)}<div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
       .slice(1 + page * 50, 1 + (page + 1) * 50)
       .map((r, i) => rowHTML(r, 1 + page * 50 + i))
       .join(
@@ -398,7 +399,7 @@ export class Notebook {
       isColumn = selection?.axis === "column",
       label = isColumn ? "列" : "行",
       disabled = hasSelection ? "" : "disabled";
-    return `<div class="nb-grid-tools nb-grid-selection-tools" data-selected="${hasSelection}" role="toolbar" aria-label="表格选区工具"><span class="nb-grid-selection-state">${tableIcon(hasSelection ? "check" : "square")}<strong>${hasSelection ? `<span class="nb-grid-selection-prefix">已选 </span>${selection.indices.size} ${label}` : "点击行号或列头选择"}</strong></span><span class="nb-grid-selection-hint"><kbd>Shift</kbd> 连选</span><div class="nb-grid-context-actions"><details class="nb-grid-menu" data-grid-insert-menu><summary aria-label="插入行或列">${tableIcon("plus")}插入${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-insert-panel"><button data-nb="grid-insert-before" ${disabled}>${tableIcon(isColumn ? "left" : "up")}在${isColumn ? "左侧" : "上方"}插入${label}</button><button data-nb="grid-insert-after" ${disabled}>${tableIcon(isColumn ? "right" : "down")}在${isColumn ? "右侧" : "下方"}插入${label}</button></div></details><div class="nb-grid-copy-group"><button class="button small" data-nb="grid-copy" ${disabled}>${tableIcon("copy")}复制</button><details class="nb-grid-menu" data-grid-copy-options><summary aria-label="复制选项" title="复制选项">${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-copy-panel"><label><input type="checkbox" data-grid-copy-header ${selection?.includeHeader ? "checked" : ""} ${disabled}>包含表头</label><small>可直接粘贴到 Excel<br>保留单元格内的换行</small></div></details></div><button class="text-button nb-grid-clear" data-nb="grid-clear-selection" ${disabled} title="清除选择" aria-label="清除选择">${tableIcon("close")}</button></div></div>`;
+    return `<div class="nb-grid-tools nb-grid-selection-tools" data-selected="${hasSelection}" role="toolbar" aria-label="表格选区工具"><span class="nb-grid-selection-state">${tableIcon(hasSelection ? "check" : "square")}<strong>${hasSelection ? `<span class="nb-grid-selection-prefix">已选 </span>${selection.indices.size} ${label}` : "点击行号或列头选择"}</strong></span><span class="nb-grid-selection-hint"><kbd>Shift</kbd> 连选</span><div class="nb-grid-context-actions"><details class="nb-grid-menu" data-grid-insert-menu><summary aria-label="插入行或列">${tableIcon("plus")}插入${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-insert-panel"><button data-nb="grid-insert-before" ${disabled}>${tableIcon(isColumn ? "left" : "up")}在${isColumn ? "左侧" : "上方"}插入${label}</button><button data-nb="grid-insert-after" ${disabled}>${tableIcon(isColumn ? "right" : "down")}在${isColumn ? "右侧" : "下方"}插入${label}</button></div></details><div class="nb-grid-copy-group"><button class="button small" data-nb="grid-copy" ${disabled}>${tableIcon("copy")}复制</button><details class="nb-grid-menu" data-grid-copy-options><summary aria-label="复制选项" title="复制选项">${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-copy-panel"><label><input type="checkbox" data-grid-copy-header ${selection?.includeHeader ? "checked" : ""} ${disabled}>包含表头</label><small>可直接粘贴到 Excel<br>保留单元格内的换行</small></div></details></div><button class="text-button nb-grid-delete-selection" data-nb="grid-delete-selection" ${disabled} title="删除选中${label}" aria-label="删除选中的 ${selection?.indices.size || 0} ${label}">${tableIcon("trash")}</button><button class="text-button nb-grid-clear" data-nb="grid-clear-selection" ${disabled} title="清除选择" aria-label="清除选择">${tableIcon("close")}</button></div></div>`;
   }
   selectTableDimension(id, axis, index, extend) {
     let selection = this.tableSelections.get(id);
@@ -879,6 +880,28 @@ export class Notebook {
         this.toast(
           `已复制 ${selection.indices.size} ${selection.axis === "row" ? "行" : "列"}，可粘贴到 Excel`,
         );
+        return;
+      }
+      if (action === "grid-delete-selection") {
+        const selection = this.tableSelections.get(id);
+        if (!selection?.indices.size)
+          throw new Error("请先选择需要删除的行或列");
+        const next = deleteTableSelection(
+            rows,
+            selection.axis,
+            selection.indices,
+          ),
+          label = selection.axis === "row" ? "行" : "列";
+        if (
+          !confirm(
+            `删除选中的 ${selection.indices.size} ${label}及其全部数据？此操作无法撤销。`,
+          )
+        )
+          return;
+        this.saveTable(cell, next);
+        this.tableSelections.delete(id);
+        this.renderTable(cell);
+        this.toast(`已删除 ${selection.indices.size} ${label}`);
         return;
       }
       if (action === "grid-insert-before" || action === "grid-insert-after") {

@@ -102,6 +102,59 @@ test("copying selected rows or columns keeps order and optional headers", () => 
   assert.throws(() => core.copyTableSelection(rows, "row", [0], false));
   assert.throws(() => core.copyTableSelection(rows, "column", [3], true));
 });
+test("batch deletion removes disjoint rows or columns without changing retained data", () => {
+  const rows = [
+    ["A", "B", "C"],
+    ["一", "删除", "第一段\n第二段"],
+    ["二", '保留\t"文字"', ""],
+    ["三", "删除", "尾部"],
+  ];
+  const before = structuredClone(rows);
+  assert.deepEqual(core.deleteTableSelection(rows, "row", [3, 1, 1]), [
+    rows[0],
+    rows[2],
+  ]);
+  assert.deepEqual(
+    core.deleteTableSelection(rows, "column", [2, 0]),
+    rows.map((row) => [row[1]]),
+  );
+  assert.deepEqual(rows, before);
+});
+test("batch deletion preserves the header and at least one column", () => {
+  const rows = [["表头"], ["第一段\n第二段"], [""]];
+  const before = structuredClone(rows);
+  const empty = core.deleteTableSelection(rows, "row", [1, 2]);
+  assert.deepEqual(empty, [["表头"]]);
+  assert.deepEqual(core.parseCSV(core.serializeCSV(empty)), empty);
+  assert.deepEqual(core.insertTableDimension(empty, "row", 1), [
+    ["表头"],
+    [""],
+  ]);
+  for (const [axis, indices] of [
+    ["row", []],
+    ["row", [1, 0]],
+    ["row", [1, 3]],
+    ["row", [1.5]],
+    ["column", [0]],
+    ["column", [1]],
+    ["invalid", [1]],
+  ]) {
+    assert.throws(() => core.deleteTableSelection(rows, axis, indices));
+    assert.deepEqual(rows, before);
+  }
+  assert.throws(
+    () =>
+      core.deleteTableSelection(
+        [
+          ["A", "B"],
+          ["一", "二"],
+        ],
+        "column",
+        [1, 0],
+      ),
+    /至少保留一列/,
+  );
+});
 test("table template has requested columns and body rows", () => {
   assert.equal(typeof core.createTable, "function");
   const result = core.createTable(2, 3);

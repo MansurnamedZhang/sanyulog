@@ -775,7 +775,10 @@ const assert = require("node:assert/strict");
       await singleColumn.screenshot({
         path: process.env.UI_TABLE_MOBILE_CAPTURE,
       });
-    const stableGridAction = async (action, { row, column } = {}) => {
+    const stableGridAction = async (
+      action,
+      { row, column, confirmation } = {},
+    ) => {
       const selector = `[data-nb="${action}"]${row ? `[data-row="${row}"]` : ""}${column !== undefined ? `[data-column="${column}"]` : ""}`;
       const button = singleColumn.locator(selector);
       await button.scrollIntoViewIfNeeded();
@@ -791,9 +794,16 @@ const assert = require("node:assert/strict");
           left: grid.scrollLeft,
         };
       }, !action.includes("delete"));
-      if (action.includes("delete"))
-        page.once("dialog", (dialog) => dialog.accept());
-      await button.click();
+      const dialogReady = action.includes("delete")
+        ? page.waitForEvent("dialog")
+        : null;
+      const clicked = button.click();
+      if (dialogReady) {
+        const dialog = await dialogReady;
+        if (confirmation) assert.match(dialog.message(), confirmation);
+        await dialog.accept();
+      }
+      await clicked;
       await page.evaluate(
         () =>
           new Promise((resolve) =>
@@ -1091,6 +1101,156 @@ const assert = require("node:assert/strict");
       await singleColumn.screenshot({
         path: process.env.UI_TABLE_SELECTION_MOBILE_CAPTURE,
       });
+
+    // Delete a disjoint selection across pages, first checking cancellation.
+    await singleColumn.locator('[data-nb="grid-clear-selection"]').click();
+    await singleColumn.locator('[data-nb="grid-prev"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-next"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="51"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="53"]')
+      .click();
+    const cancelReady = page.waitForEvent("dialog");
+    const canceledClick = singleColumn
+      .locator('[data-nb="grid-delete-selection"]')
+      .click();
+    const cancelDialog = await cancelReady;
+    assert.match(cancelDialog.message(), /删除选中的 3 行/);
+    await cancelDialog.dismiss();
+    await canceledClick;
+    assert.match(await singleColumn.innerText(), /72 行 × 2 列/);
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [
+      ["1", "备注 1"],
+      ["", ""],
+      ["51", "备注 51"],
+    ]);
+    await stableGridAction("grid-delete-selection", {
+      confirmation: /删除选中的 3 行/,
+    });
+    assert.match(await singleColumn.innerText(), /69 行 × 2 列/);
+    assert(
+      await singleColumn
+        .locator('[data-nb="grid-delete-selection"]')
+        .isDisabled(),
+    );
+    assert.equal(
+      await field(50, 0).count(),
+      0,
+      "Deleting rows keeps the current page",
+    );
+    assert.equal(await field(51, 0).inputValue(), "52");
+    const remainingBulkRows = [
+      ["编号", "备注"],
+      ...Array.from({ length: 49 }, (_, i) => [String(i + 2), `备注 ${i + 2}`]),
+      ["", ""],
+      ...Array.from({ length: 19 }, (_, i) => [
+        String(i + 52),
+        `备注 ${i + 52}`,
+      ]),
+    ];
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="0"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), remainingBulkRows);
+
+    // Remove two separated columns and retain all rows of the middle column.
+    await singleColumn.locator('[data-nb="grid-clear-selection"]').click();
+    await singleColumn.locator('[data-nb="grid-add-column"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="0"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="2"]')
+      .click();
+    await page.setViewportSize({ width: 320, height: 844 });
+    await singleColumn
+      .locator('[data-nb="grid-delete-selection"]')
+      .scrollIntoViewIfNeeded();
+    const selectionLayout = await singleColumn
+      .locator(".nb-grid-selection-tools")
+      .evaluate((tools) => {
+        const rect = tools.getBoundingClientRect();
+        const actions = tools
+          .querySelector(".nb-grid-context-actions")
+          .getBoundingClientRect();
+        return {
+          width: innerWidth,
+          left: rect.left,
+          right: rect.right,
+          actionsRight: actions.right,
+          scrollWidth: document.documentElement.scrollWidth,
+        };
+      });
+    assert(
+      selectionLayout.left >= 0 &&
+        selectionLayout.right <= 320 &&
+        selectionLayout.actionsRight <= selectionLayout.right &&
+        selectionLayout.scrollWidth <= 320,
+      JSON.stringify(selectionLayout),
+    );
+    if (process.env.UI_TABLE_BULK_DELETE_CAPTURE)
+      await singleColumn.screenshot({
+        path: process.env.UI_TABLE_BULK_DELETE_CAPTURE,
+      });
+    await stableGridAction("grid-delete-selection", {
+      confirmation: /删除选中的 2 列/,
+    });
+    assert.match(await singleColumn.innerText(), /69 行 × 1 列/);
+    assert.equal(await field(0, 0).inputValue(), "备注");
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="0"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(
+      await clipboardRows(),
+      remainingBulkRows.map((row) => [row[1]]),
+    );
+    await singleColumn.locator('[data-nb="grid-delete-selection"]').click();
+    await page
+      .getByText("至少保留一列，请取消选择一列后再删除", { exact: true })
+      .waitFor();
+    assert.match(await singleColumn.innerText(), /69 行 × 1 列/);
+    await page.locator('[data-save-status][data-state="saved"]').waitFor();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.match(await singleColumn.innerText(), /69 行 × 1 列/);
+    assert.equal(await field(1, 0).inputValue(), "备注 2");
+
+    // Deleting every data row leaves an editable header and a valid blank row.
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-next"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="69"]')
+      .click({ modifiers: ["Shift"] });
+    await stableGridAction("grid-delete-selection", {
+      confirmation: /删除选中的 69 行/,
+    });
+    assert.match(await singleColumn.innerText(), /0 行 × 1 列/);
+    assert.equal(await field(0, 0).inputValue(), "备注");
+    await page.locator('[data-save-status][data-state="saved"]').waitFor();
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.match(await singleColumn.innerText(), /0 行 × 1 列/);
+    await singleColumn.locator('[data-nb="grid-add-row"]').click();
+    await field(1, 0).fill("批量删除后\n仍可继续编辑");
+    await page.locator('[data-save-status][data-state="saved"]').waitFor();
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.match(await singleColumn.innerText(), /1 行 × 1 列/);
+    assert.equal(await field(1, 0).inputValue(), "批量删除后\n仍可继续编辑");
 
     await page.locator("#detail").evaluate((e) => (e.scrollTop = 0));
     await page.setViewportSize({ width: 768, height: 1100 });
