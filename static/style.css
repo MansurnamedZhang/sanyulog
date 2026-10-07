@@ -1183,6 +1183,26 @@ dialog form {
   border-radius: 5px;
   background: transparent;
 }
+.nb-grid-selection-tools {
+  border-top: 1px solid #e5ecde;
+  background: #fafcf7;
+}
+.nb-grid-selection-tools > span {
+  flex: 0 0 230px;
+}
+.nb-grid-selection-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.nb-grid-selection-tools input {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  accent-color: #52734f;
+}
 .nb-data-grid {
   overflow: auto;
   max-height: 600px;
@@ -1216,6 +1236,33 @@ dialog form {
   padding: 12px 4px;
   color: #69745f;
 }
+.nb-data-grid tbody th {
+  padding: 0;
+}
+.nb-grid-select-row {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 4px;
+}
+.nb-grid-select-column {
+  position: absolute;
+  left: 6px;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 4px;
+}
+.nb-grid-select-row[aria-pressed="true"],
+.nb-grid-select-column[aria-pressed="true"] {
+  background: #dce9d5;
+  color: #345630;
+  font-weight: 600;
+}
+.nb-data-grid .nb-grid-selected {
+  background: #edf4e8;
+}
 .nb-data-grid thead {
   background: #f1f5eb;
   position: sticky;
@@ -1246,6 +1293,7 @@ dialog form {
 }
 .nb-data-grid thead textarea {
   font-weight: 600;
+  padding-left: 40px;
   padding-right: 36px;
 }
 .nb-data-grid [data-nb="grid-delete-column"] {
@@ -2353,6 +2401,9 @@ textarea::placeholder {
   }
   .nb-grid-tools select {
     font-size: 12px;
+  }
+  .nb-grid-selection-tools > span {
+    flex-basis: 100%;
   }
   .nb-file img {
     max-width: 100%;

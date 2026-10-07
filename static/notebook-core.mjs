@@ -50,19 +50,55 @@ export function parseCSV(text, delimiter = ",") {
     throw new Error("独立表格最多 1000 行数据、50 列");
   return rows;
 }
-export function serializeCSV(rows) {
+export function serializeCSV(rows, delimiter = ",") {
   return rows
     .map((row) =>
       row
         .map((value) => {
           value = String(value);
-          return (row.length === 1 && value === "") || /[,"\r\n]/.test(value)
+          return (row.length === 1 && value === "") ||
+            value.includes(delimiter) ||
+            /["\r\n]/.test(value)
             ? '"' + value.replaceAll('"', '""') + '"'
             : value;
         })
-        .join(","),
+        .join(delimiter),
     )
     .join("\r\n");
+}
+
+export function insertTableDimension(rows, axis, index) {
+  const isRow = axis === "row";
+  if (!isRow && axis !== "column") throw new Error("请选择行或列");
+  const size = isRow ? rows.length : rows[0].length;
+  if (!Number.isInteger(index) || index < (isRow ? 1 : 0) || index > size)
+    throw new Error("插入位置超出表格范围");
+  if (size >= (isRow ? 1001 : 50))
+    throw new Error(isRow ? "最多 1000 行数据" : "最多 50 列");
+  const next = rows.map((row) => [...row]);
+  if (isRow) next.splice(index, 0, Array(rows[0].length).fill(""));
+  else next.forEach((row, r) => row.splice(index, 0, r === 0 ? "新列" : ""));
+  return next;
+}
+
+export function copyTableSelection(rows, axis, indices, includeHeader = false) {
+  if (axis !== "row" && axis !== "column") throw new Error("请选择行或列");
+  const selected = [...new Set(indices)].sort((a, b) => a - b),
+    max = axis === "row" ? rows.length : rows[0].length;
+  if (!selected.length) throw new Error("请先选择需要复制的行或列");
+  if (
+    selected.some(
+      (i) => !Number.isInteger(i) || i < (axis === "row" ? 1 : 0) || i >= max,
+    )
+  )
+    throw new Error("选择超出表格范围，请重新选择");
+  const values =
+    axis === "row"
+      ? [...(includeHeader ? [rows[0]] : []), ...selected.map((i) => rows[i])]
+      : rows
+          .slice(includeHeader ? 0 : 1)
+          .map((row) => selected.map((i) => row[i]));
+  return serializeCSV(values, "\t");
 }
 
 export function createTable(rows = 3, columns = 3) {

@@ -27,6 +27,81 @@ test("single-column table preserves newly added empty rows", () => {
   const rows = [["TemplateId"], [""], [""]];
   assert.deepEqual(core.parseCSV(core.serializeCSV(rows)), rows);
 });
+test("TSV serialization keeps multiline, quotes, tabs and empty cells", () => {
+  const rows = [
+    ["名称", "备注"],
+    ["A\tB", '第一段\n\n第二段,"引号"'],
+    ["", ""],
+  ];
+  assert.deepEqual(core.parseCSV(core.serializeCSV(rows, "\t"), "\t"), rows);
+});
+test("table insertion preserves data, supports edges and enforces limits", () => {
+  const rows = [
+    ["A", "B"],
+    ["一", "多段\n文字"],
+    ["二", ""],
+  ];
+  const before = structuredClone(rows);
+  assert.deepEqual(core.insertTableDimension(rows, "row", 1), [
+    ["A", "B"],
+    ["", ""],
+    ...rows.slice(1),
+  ]);
+  assert.deepEqual(core.insertTableDimension(rows, "row", 3), [
+    ...rows,
+    ["", ""],
+  ]);
+  assert.deepEqual(core.insertTableDimension(rows, "column", 0), [
+    ["新列", "A", "B"],
+    ["", "一", "多段\n文字"],
+    ["", "二", ""],
+  ]);
+  assert.deepEqual(core.insertTableDimension(rows, "column", 2), [
+    ["A", "B", "新列"],
+    ["一", "多段\n文字", ""],
+    ["二", "", ""],
+  ]);
+  assert.deepEqual(rows, before);
+  assert.throws(() => core.insertTableDimension(rows, "row", 0));
+  assert.throws(() => core.insertTableDimension(rows, "column", 3));
+  assert.throws(() =>
+    core.insertTableDimension(
+      Array.from({ length: 1001 }, () => [""]),
+      "row",
+      1,
+    ),
+  );
+  assert.throws(() =>
+    core.insertTableDimension([Array(50).fill("")], "column", 0),
+  );
+});
+test("copying selected rows or columns keeps order and optional headers", () => {
+  const rows = [
+    ["A", "B", "C"],
+    ["一", '含\t制表符与"引号"', "第一段\n第二段"],
+    ["二", "保留", ""],
+    ["三", "", "尾部"],
+  ];
+  assert.deepEqual(
+    core.parseCSV(core.copyTableSelection(rows, "row", [3, 1, 1], false), "\t"),
+    [rows[1], rows[3]],
+  );
+  assert.deepEqual(
+    core.parseCSV(core.copyTableSelection(rows, "row", [2], true), "\t"),
+    [rows[0], rows[2]],
+  );
+  assert.deepEqual(
+    core.parseCSV(core.copyTableSelection(rows, "column", [2, 0], true), "\t"),
+    rows.map((r) => [r[0], r[2]]),
+  );
+  assert.deepEqual(
+    core.parseCSV(core.copyTableSelection(rows, "column", [1], false), "\t"),
+    rows.slice(1).map((r) => [r[1]]),
+  );
+  assert.throws(() => core.copyTableSelection(rows, "row", [], false));
+  assert.throws(() => core.copyTableSelection(rows, "row", [0], false));
+  assert.throws(() => core.copyTableSelection(rows, "column", [3], true));
+});
 test("table template has requested columns and body rows", () => {
   assert.equal(typeof core.createTable, "function");
   const result = core.createTable(2, 3);
@@ -243,6 +318,7 @@ test("independent table view escapes values and paginates data rows", async () =
   );
   const notebook = Object.create(Notebook.prototype);
   notebook.tablePages = new Map();
+  notebook.tableSelections = new Map();
   const cell = {
     id: "a",
     source: core.serializeCSV([

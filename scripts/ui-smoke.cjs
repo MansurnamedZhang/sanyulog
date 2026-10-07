@@ -874,6 +874,195 @@ const assert = require("node:assert/strict");
       /3 行 × 1 列/,
     );
 
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await singleColumn.locator('[data-nb="grid-add-column"]').click();
+    const field = (r, c) =>
+      singleColumn.locator(`[data-grid-row="${r}"][data-grid-col="${c}"]`);
+    await field(0, 0).fill("步骤");
+    await field(0, 1).fill("说明");
+    const copiedParagraphs = '第一段\n\n第二段，含"引号"与\t制表符';
+    const copyRows = [
+      ["第一项", copiedParagraphs],
+      ["第二项", "不选择这一行"],
+      ["第三项", "末项"],
+    ];
+    for (let r = 0; r < copyRows.length; r++) {
+      for (let c = 0; c < 2; c++) await field(r + 1, c).fill(copyRows[r][c]);
+    }
+    const { parseCSV } = await import("../static/notebook-core.mjs");
+    const clipboardRows = async () =>
+      parseCSV(await page.evaluate(() => navigator.clipboard.readText()), "\t");
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="1"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="3"]')
+      .click({ modifiers: ["Shift"] });
+    assert.equal(
+      await singleColumn
+        .locator('[data-nb="grid-select-row"][aria-pressed="true"]')
+        .count(),
+      3,
+    );
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="2"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [copyRows[0], copyRows[2]]);
+    await singleColumn.locator("[data-grid-copy-header]").check();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [
+      ["步骤", "说明"],
+      copyRows[0],
+      copyRows[2],
+    ]);
+    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    assert.equal(await field(1, 0).inputValue(), "");
+    assert.equal(await field(2, 0).inputValue(), "第一项");
+    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    assert.equal(await field(2, 0).inputValue(), "");
+    assert.equal(await field(3, 0).inputValue(), "第一项");
+    assert.match(await singleColumn.innerText(), /5 行 × 2 列/);
+    await singleColumn.locator('[data-nb="grid-clear-selection"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="0"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    assert.equal(await field(0, 0).inputValue(), "新列");
+    assert.equal(await field(0, 1).inputValue(), "步骤");
+    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    assert.equal(await field(0, 1).inputValue(), "新列");
+    assert.equal(await field(0, 2).inputValue(), "步骤");
+    assert.equal(await field(0, 3).inputValue(), "说明");
+    await singleColumn.locator('[data-nb="grid-clear-selection"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="2"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="3"]')
+      .click();
+    await page.evaluate(() =>
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: undefined,
+      }),
+    );
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    await page.evaluate(() => delete navigator.clipboard);
+    assert.deepEqual(await clipboardRows(), [
+      ["步骤", "说明"],
+      ["", ""],
+      ["", ""],
+      ...copyRows,
+    ]);
+    await page.locator('[data-save-status][data-state="saved"]').waitFor();
+    await page.reload();
+    await page.locator("[data-action=select]").first().click();
+    assert.match(await singleColumn.innerText(), /5 行 × 4 列/);
+    assert.equal(await field(3, 3).inputValue(), copiedParagraphs);
+    assert(await singleColumn.locator('[data-nb="grid-copy"]').isDisabled());
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="3"]')
+      .click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="5"]')
+      .click();
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn
+      .locator('[data-nb="grid-delete-row"][data-row="1"]')
+      .click();
+    assert.equal(
+      await singleColumn
+        .locator('[data-nb="grid-select-row"][data-row="2"]')
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(
+      await singleColumn
+        .locator('[data-nb="grid-select-row"][data-row="4"]')
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [
+      ["", "", ...copyRows[0]],
+      ["", "", ...copyRows[2]],
+    ]);
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn
+      .locator('[data-nb="grid-delete-row"][data-row="2"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [["", "", ...copyRows[2]]]);
+    const pagedCSV =
+      "编号,备注\n" +
+      Array.from({ length: 70 }, (_, i) => `${i + 1},备注 ${i + 1}`).join("\n");
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn.locator("[data-csv-input]").setInputFiles({
+      name: "selection.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(pagedCSV, "utf8"),
+    });
+    await page.waitForFunction(
+      (id) =>
+        document
+          .querySelector(`[data-cell="${id}"]`)
+          .innerText.includes("70 行 × 2 列"),
+      singleColumnId,
+    );
+    assert(await singleColumn.locator('[data-nb="grid-copy"]').isDisabled());
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-next"]').click();
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="51"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    assert.deepEqual(await clipboardRows(), [
+      ["1", "备注 1"],
+      ["51", "备注 51"],
+    ]);
+    await singleColumn
+      .locator('[data-nb="grid-select-column"][data-column="1"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-copy"]').click();
+    const allColumnRows = await clipboardRows();
+    assert.equal(
+      allColumnRows.length,
+      71,
+      "Copying a column includes data on other pages",
+    );
+    assert.deepEqual(allColumnRows[0], ["备注"]);
+    assert.deepEqual(allColumnRows.at(-1), ["备注 70"]);
+    await singleColumn
+      .locator('[data-nb="grid-select-row"][data-row="51"]')
+      .click();
+    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    assert.equal(await field(51, 0).inputValue(), "");
+    assert.equal(await field(52, 0).inputValue(), "51");
+    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    assert.equal(await field(52, 0).inputValue(), "");
+    assert.equal(await field(53, 0).inputValue(), "51");
+    assert.match(await singleColumn.innerText(), /72 行 × 2 列/);
+    if (process.env.UI_TABLE_SELECTION_CAPTURE)
+      await singleColumn.screenshot({
+        path: process.env.UI_TABLE_SELECTION_CAPTURE,
+      });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    if (process.env.UI_TABLE_SELECTION_MOBILE_CAPTURE)
+      await singleColumn.screenshot({
+        path: process.env.UI_TABLE_SELECTION_MOBILE_CAPTURE,
+      });
+
     await page.locator("#detail").evaluate((e) => (e.scrollTop = 0));
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });

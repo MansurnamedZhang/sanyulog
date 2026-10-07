@@ -8,6 +8,8 @@ import {
   tsvToTable,
   parseCSV,
   serializeCSV,
+  insertTableDimension,
+  copyTableSelection,
 } from "./notebook-core.mjs";
 const $ = (s, r) => r.querySelector(s),
   $$ = (s, r) => [...r.querySelectorAll(s)];
@@ -25,6 +27,40 @@ const makeCell = (type = "markdown") => ({
   language: type === "code" ? "python" : "",
   attachment_ids: [],
 });
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // LAN HTTP and browsers that deny the async API use the native copy path.
+    }
+  }
+  const focused = document.activeElement,
+    area = document.createElement("textarea");
+  area.value = text;
+  area.readOnly = true;
+  Object.assign(area.style, {
+    position: "fixed",
+    top: "0",
+    left: "0",
+    width: "1px",
+    height: "1px",
+    minHeight: "0",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  document.body.append(area);
+  try {
+    area.focus({ preventScroll: true });
+    area.select();
+    if (!document.execCommand("copy"))
+      throw new Error("无法复制，请允许浏览器访问剪贴板后重试");
+  } finally {
+    area.remove();
+    focused?.focus({ preventScroll: true });
+  }
+}
 const metadata = [
   "title",
   "status",
@@ -56,6 +92,7 @@ export class Notebook {
     this.toast = toast;
     this.writeDraft = writeDraft;
     this.tablePages = new Map();
+    this.tableSelections = new Map();
     this.gridHeights = new WeakMap();
     this.gridWidths = new WeakMap();
     this.gridResizeObserver = new ResizeObserver((entries) => {
@@ -317,17 +354,92 @@ export class Notebook {
   }
   tableHTML(cell) {
     const rows = this.tableRows(cell),
+      selected = this.tableSelections.get(cell.id),
       pages = Math.max(1, Math.ceil((rows.length - 1) / 50)),
       page = Math.min(this.tablePages.get(cell.id) || 0, pages - 1);
     this.tablePages.set(cell.id, page);
+    const isSelected = (axis, index) =>
+      selected?.axis === axis && selected.indices.has(index);
     const rowHTML = (row, r) =>
-      `<tr><th>${r === 0 ? "表头" : r}</th>${row.map((v, c) => `<td><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列">×</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行">×</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
-    return `<div class="nb-grid-tools"><button class="button small" data-nb="grid-add-row">＋ 行</button><button class="button small" data-nb="grid-add-column">＋ 列</button><button class="button small" data-nb="grid-import">导入 CSV / TSV</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">导出 CSV</button><span>${rows.length - 1} 行 × ${rows[0].length} 列</span></div><div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
+      `<tr><th>${r === 0 ? "表头" : `<button class="nb-grid-select-row" data-nb="grid-select-row" data-row="${r}" aria-label="选择第 ${r} 行" aria-pressed="${!!isSelected("row", r)}" title="选择第 ${r} 行，Shift 连选">${r}</button>`}</th>${row.map((v, c) => `<td class="${isSelected("row", r) || isSelected("column", c) ? "nb-grid-selected" : ""}"><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="nb-grid-select-column" data-nb="grid-select-column" data-column="${c}" aria-label="选择第 ${c + 1} 列" aria-pressed="${!!isSelected("column", c)}" title="选择第 ${c + 1} 列，Shift 连选">${isSelected("column", c) ? "✓" : "□"}</button><button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列">×</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行">×</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
+    return `<div class="nb-grid-tools"><button class="button small" data-nb="grid-add-row">＋ 行</button><button class="button small" data-nb="grid-add-column">＋ 列</button><button class="button small" data-nb="grid-import">导入 CSV / TSV</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">导出 CSV</button><span>${rows.length - 1} 行 × ${rows[0].length} 列</span></div>${this.tableSelectionTools(cell)}<div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
       .slice(1 + page * 50, 1 + (page + 1) * 50)
       .map((r, i) => rowHTML(r, 1 + page * 50 + i))
       .join(
         "",
       )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>文字自动换行，行高随内容调整。第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
+  }
+  tableSelectionTools(cell) {
+    const selection = this.tableSelections.get(cell.id),
+      label = selection?.axis === "column" ? "列" : "行",
+      disabled = selection?.indices.size ? "" : "disabled";
+    return `<div class="nb-grid-tools nb-grid-selection-tools" role="toolbar" aria-label="表格选区工具"><span>${selection ? `已选 ${selection.indices.size} ${label}` : "点击行号或列头 □ 多选，Shift 连选"}</span><button class="button small" data-nb="grid-insert-before" ${disabled} title="在首个选中${label}前插入一${label}">前插${label}</button><button class="button small" data-nb="grid-insert-after" ${disabled} title="在最后一个选中${label}后插入一${label}">后插${label}</button><button class="button small" data-nb="grid-copy" ${disabled} title="复制为可粘贴到 Excel 的表格">复制选中</button><label><input type="checkbox" data-grid-copy-header ${selection?.includeHeader ? "checked" : ""} ${disabled}>含表头</label><button class="text-button" data-nb="grid-clear-selection" ${disabled}>清除选择</button></div>`;
+  }
+  selectTableDimension(id, axis, index, extend) {
+    let selection = this.tableSelections.get(id);
+    if (!selection || selection.axis !== axis)
+      selection = {
+        axis,
+        indices: new Set(),
+        anchor: null,
+        includeHeader: axis === "column",
+      };
+    if (extend && selection.anchor !== null) {
+      for (
+        let i = Math.min(selection.anchor, index);
+        i <= Math.max(selection.anchor, index);
+        i++
+      )
+        selection.indices.add(i);
+    } else {
+      if (selection.indices.has(index)) selection.indices.delete(index);
+      else selection.indices.add(index);
+      selection.anchor = index;
+    }
+    if (selection.indices.size) this.tableSelections.set(id, selection);
+    else this.tableSelections.delete(id);
+  }
+  updateTableSelection(cell) {
+    const element = this.cellElement(cell.id),
+      selection = this.tableSelections.get(cell.id),
+      selected = (axis, index) =>
+        selection?.axis === axis && selection.indices.has(index);
+    for (const button of $$(
+      "[data-nb=grid-select-row], [data-nb=grid-select-column]",
+      element,
+    )) {
+      const axis = button.dataset.nb === "grid-select-row" ? "row" : "column",
+        pressed = !!selected(axis, Number(button.dataset[axis]));
+      button.setAttribute("aria-pressed", String(pressed));
+      if (axis === "column") button.textContent = pressed ? "✓" : "□";
+    }
+    for (const area of $$("[data-grid-row]", element)) {
+      area
+        .closest("td")
+        .classList.toggle(
+          "nb-grid-selected",
+          !!(
+            selected("row", Number(area.dataset.gridRow)) ||
+            selected("column", Number(area.dataset.gridCol))
+          ),
+        );
+    }
+    const template = document.createElement("template");
+    template.innerHTML = this.tableSelectionTools(cell);
+    $(".nb-grid-selection-tools", element).replaceChildren(
+      ...template.content.firstElementChild.childNodes,
+    );
+  }
+  remapTableSelection(id, axis, deletedIndex) {
+    const selection = this.tableSelections.get(id);
+    if (!selection || selection.axis !== axis) return;
+    selection.indices = new Set(
+      [...selection.indices]
+        .filter((i) => i !== deletedIndex)
+        .map((i) => (i > deletedIndex ? i - 1 : i)),
+    );
+    if (!selection.indices.size) this.tableSelections.delete(id);
+    else selection.anchor = Math.min(...selection.indices);
   }
   layoutGrid(grid) {
     $("table", grid).style.minWidth =
@@ -423,6 +535,7 @@ export class Notebook {
       throw new Error("表格已发生变化，请重新导入");
     this.saveTable(cell, rows);
     this.tablePages.set(cell.id, 0);
+    this.tableSelections.delete(cell.id);
     this.renderTable(cell);
     $(".nb-data-grid", element).scrollTop = 0;
     this.toast("已导入表格，第一行为表头");
@@ -608,6 +721,14 @@ export class Notebook {
     });
   }
   change(event) {
+    if (event.target.matches("[data-grid-copy-header]")) {
+      event.stopPropagation();
+      const selection = this.tableSelections.get(
+        event.target.closest("[data-cell]").dataset.cell,
+      );
+      if (selection) selection.includeHeader = event.target.checked;
+      return;
+    }
     if (event.target.matches("[data-csv-input]")) {
       this.importCSV(event.target).catch((e) => this.toast(e.message, true));
       return;
@@ -626,6 +747,7 @@ export class Notebook {
         }
       }
       cell.type = event.target.value;
+      this.tableSelections.delete(id);
       this.editing.add(id);
       this.queue.change({ cells: this.queue.data.cells });
       this.renderCells(id);
@@ -690,6 +812,59 @@ export class Notebook {
       const cell = this.cell(id),
         rows = this.tableRows(cell),
         page = this.tablePages.get(id) || 0;
+      if (action === "grid-select-row" || action === "grid-select-column") {
+        const axis = action === "grid-select-row" ? "row" : "column";
+        this.selectTableDimension(
+          id,
+          axis,
+          Number(button.dataset[axis]),
+          event.shiftKey,
+        );
+        this.updateTableSelection(cell);
+        return;
+      }
+      if (action === "grid-clear-selection") {
+        this.tableSelections.delete(id);
+        this.updateTableSelection(cell);
+        return;
+      }
+      if (action === "grid-copy") {
+        const selection = this.tableSelections.get(id);
+        if (!selection?.indices.size)
+          throw new Error("请先选择需要复制的行或列");
+        await copyTextToClipboard(
+          copyTableSelection(
+            rows,
+            selection.axis,
+            selection.indices,
+            selection.includeHeader,
+          ),
+        );
+        this.toast(
+          `已复制 ${selection.indices.size} ${selection.axis === "row" ? "行" : "列"}，可粘贴到 Excel`,
+        );
+        return;
+      }
+      if (action === "grid-insert-before" || action === "grid-insert-after") {
+        const selection = this.tableSelections.get(id);
+        if (!selection?.indices.size)
+          throw new Error("请先选择插入位置的行或列");
+        const index =
+          action === "grid-insert-before"
+            ? Math.min(...selection.indices)
+            : Math.max(...selection.indices) + 1;
+        const next = insertTableDimension(rows, selection.axis, index);
+        this.saveTable(cell, next);
+        this.tableSelections.set(id, {
+          ...selection,
+          indices: new Set([index]),
+          anchor: index,
+        });
+        if (selection.axis === "row")
+          this.tablePages.set(id, Math.floor((index - 1) / 50));
+        this.renderTable(cell);
+        return;
+      }
       if (action === "grid-import") {
         $("[data-csv-input]", this.cellElement(id)).click();
         return;
@@ -722,11 +897,13 @@ export class Notebook {
         if (action === "grid-delete-row") {
           if (!confirm("删除此行数据？")) return;
           rows.splice(Number(button.dataset.row), 1);
+          this.remapTableSelection(id, "row", Number(button.dataset.row));
         }
         if (action === "grid-delete-column") {
           if (rows[0].length === 1) throw new Error("至少保留一列");
           if (!confirm("删除此列及其数据？")) return;
           rows.forEach((r) => r.splice(Number(button.dataset.column), 1));
+          this.remapTableSelection(id, "column", Number(button.dataset.column));
         }
         this.saveTable(cell, rows);
       }
