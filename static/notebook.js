@@ -13,6 +13,27 @@ import {
 } from "./notebook-core.mjs";
 const $ = (s, r) => r.querySelector(s),
   $$ = (s, r) => [...r.querySelectorAll(s)];
+const tableIcons = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  column:
+    '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
+  upload: '<path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/>',
+  download: '<path d="M12 4v12m-4-4 4 4 4-4M4 16v4h16v-4"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  left: '<path d="m15 6-6 6 6 6"/>',
+  right: '<path d="m9 6 6 6-6 6"/>',
+  copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 8.5a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 16h.01"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  square: '<rect x="4" y="4" width="16" height="16" rx="3"/>',
+  trash: '<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>',
+  wrap: '<path d="M3 5h18M3 10h14a4 4 0 0 1 0 8h-4m3-3-3 3 3 3M3 15h5"/>',
+};
+const tableIcon = (name) =>
+  `<svg class="nb-grid-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${tableIcons[name]}</svg>`;
+
 const labels = {
   markdown: "Markdown",
   code: "代码",
@@ -335,7 +356,7 @@ export class Notebook {
   cellHTML(cell, index) {
     const editing = this.editing.has(cell.id) || cell.type !== "markdown";
     const preview = cell.type === "markdown" && !editing;
-    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><select data-cell-type aria-label="单元格类型">${Object.entries(
+    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""} ${cell.type === "table" ? "nb-cell-table" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><select data-cell-type aria-label="单元格类型">${Object.entries(
       labels,
     )
       .map(
@@ -356,24 +377,28 @@ export class Notebook {
     const rows = this.tableRows(cell),
       selected = this.tableSelections.get(cell.id),
       pages = Math.max(1, Math.ceil((rows.length - 1) / 50)),
-      page = Math.min(this.tablePages.get(cell.id) || 0, pages - 1);
+      page = Math.min(this.tablePages.get(cell.id) || 0, pages - 1),
+      rowStart = rows.length > 1 ? 1 + page * 50 : 0,
+      rowEnd = Math.min(rows.length - 1, (page + 1) * 50);
     this.tablePages.set(cell.id, page);
     const isSelected = (axis, index) =>
       selected?.axis === axis && selected.indices.has(index);
     const rowHTML = (row, r) =>
-      `<tr><th>${r === 0 ? "表头" : `<button class="nb-grid-select-row" data-nb="grid-select-row" data-row="${r}" aria-label="选择第 ${r} 行" aria-pressed="${!!isSelected("row", r)}" title="选择第 ${r} 行，Shift 连选">${r}</button>`}</th>${row.map((v, c) => `<td class="${isSelected("row", r) || isSelected("column", c) ? "nb-grid-selected" : ""}"><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="nb-grid-select-column" data-nb="grid-select-column" data-column="${c}" aria-label="选择第 ${c + 1} 列" aria-pressed="${!!isSelected("column", c)}" title="选择第 ${c + 1} 列，Shift 连选">${isSelected("column", c) ? "✓" : "□"}</button><button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列">×</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行">×</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
-    return `<div class="nb-grid-tools"><button class="button small" data-nb="grid-add-row">＋ 行</button><button class="button small" data-nb="grid-add-column">＋ 列</button><button class="button small" data-nb="grid-import">导入 CSV / TSV</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">导出 CSV</button><span>${rows.length - 1} 行 × ${rows[0].length} 列</span></div>${this.tableSelectionTools(cell)}<div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
+      `<tr><th>${r === 0 ? '<span class="nb-grid-corner">#</span>' : `<button class="nb-grid-select-row" data-nb="grid-select-row" data-row="${r}" aria-label="选择第 ${r} 行" aria-pressed="${!!isSelected("row", r)}" title="选择第 ${r} 行，Shift 连选">${r}</button>`}</th>${row.map((v, c) => `<td class="${isSelected("row", r) || isSelected("column", c) ? "nb-grid-selected" : ""}"><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="nb-grid-select-column" data-nb="grid-select-column" data-column="${c}" aria-label="选择第 ${c + 1} 列" aria-pressed="${!!isSelected("column", c)}" title="选择第 ${c + 1} 列，Shift 连选">${tableIcon(isSelected("column", c) ? "check" : "square")}</button><button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列" aria-label="删除第 ${c + 1} 列">${tableIcon("trash")}</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行" aria-label="删除第 ${r} 行">${tableIcon("trash")}</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
+    return `<div class="nb-grid-tools nb-grid-primary-tools"><div class="nb-grid-add-tools" aria-label="添加行列"><button class="button small" data-nb="grid-add-row">${tableIcon("plus")}添加行</button><button class="button small" data-nb="grid-add-column">${tableIcon("column")}添加列</button></div><span class="nb-grid-size">${rows.length - 1} 行 × ${rows[0].length} 列</span><div class="nb-grid-file-tools"><button class="button small" data-nb="grid-import" title="导入 CSV / TSV">${tableIcon("upload")}导入</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">${tableIcon("download")}导出 CSV</button><details class="nb-grid-menu nb-grid-help"><summary aria-label="表格使用帮助" title="表格使用帮助">${tableIcon("help")}</summary><div class="nb-grid-menu-panel"><b>表格操作</b><p>点击行号或列头选择，按住 <kbd>Shift</kbd> 连选；选区工具可定位插入、复制数据。</p><p>回车或粘贴多段文字保留在当前格。Excel 区域按多格粘贴；CSV / TSV 使用导入。</p><small>最多 1000 行数据、50 列。第一行为表头。</small></div></details></div></div>${this.tableSelectionTools(cell)}<div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
       .slice(1 + page * 50, 1 + (page + 1) * 50)
       .map((r, i) => rowHTML(r, 1 + page * 50 + i))
       .join(
         "",
-      )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>文字自动换行，行高随内容调整。第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
+      )}</tbody></table></div><div class="nb-grid-tools nb-grid-footer"><div class="nb-grid-pagination"><button class="button small" data-nb="grid-prev" ${page === 0 ? "disabled" : ""} aria-label="上一页" title="上一页">${tableIcon("left")}</button><span>${page + 1} / ${pages}</span><button class="button small" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""} aria-label="下一页" title="下一页">${tableIcon("right")}</button><small>${rowStart ? `第 ${rowStart}–${rowEnd} 行` : "暂无数据"}</small></div><span class="nb-grid-wrap-status">${tableIcon("wrap")}自动换行</span></div>`;
   }
   tableSelectionTools(cell) {
     const selection = this.tableSelections.get(cell.id),
-      label = selection?.axis === "column" ? "列" : "行",
-      disabled = selection?.indices.size ? "" : "disabled";
-    return `<div class="nb-grid-tools nb-grid-selection-tools" role="toolbar" aria-label="表格选区工具"><span>${selection ? `已选 ${selection.indices.size} ${label}` : "点击行号或列头 □ 多选，Shift 连选"}</span><button class="button small" data-nb="grid-insert-before" ${disabled} title="在首个选中${label}前插入一${label}">前插${label}</button><button class="button small" data-nb="grid-insert-after" ${disabled} title="在最后一个选中${label}后插入一${label}">后插${label}</button><button class="button small" data-nb="grid-copy" ${disabled} title="复制为可粘贴到 Excel 的表格">复制选中</button><label><input type="checkbox" data-grid-copy-header ${selection?.includeHeader ? "checked" : ""} ${disabled}>含表头</label><button class="text-button" data-nb="grid-clear-selection" ${disabled}>清除选择</button></div>`;
+      hasSelection = !!selection?.indices.size,
+      isColumn = selection?.axis === "column",
+      label = isColumn ? "列" : "行",
+      disabled = hasSelection ? "" : "disabled";
+    return `<div class="nb-grid-tools nb-grid-selection-tools" data-selected="${hasSelection}" role="toolbar" aria-label="表格选区工具"><span class="nb-grid-selection-state">${tableIcon(hasSelection ? "check" : "square")}<strong>${hasSelection ? `<span class="nb-grid-selection-prefix">已选 </span>${selection.indices.size} ${label}` : "点击行号或列头选择"}</strong></span><span class="nb-grid-selection-hint"><kbd>Shift</kbd> 连选</span><div class="nb-grid-context-actions"><details class="nb-grid-menu" data-grid-insert-menu><summary aria-label="插入行或列">${tableIcon("plus")}插入${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-insert-panel"><button data-nb="grid-insert-before" ${disabled}>${tableIcon(isColumn ? "left" : "up")}在${isColumn ? "左侧" : "上方"}插入${label}</button><button data-nb="grid-insert-after" ${disabled}>${tableIcon(isColumn ? "right" : "down")}在${isColumn ? "右侧" : "下方"}插入${label}</button></div></details><div class="nb-grid-copy-group"><button class="button small" data-nb="grid-copy" ${disabled}>${tableIcon("copy")}复制</button><details class="nb-grid-menu" data-grid-copy-options><summary aria-label="复制选项" title="复制选项">${tableIcon("down")}</summary><div class="nb-grid-menu-panel nb-grid-copy-panel"><label><input type="checkbox" data-grid-copy-header ${selection?.includeHeader ? "checked" : ""} ${disabled}>包含表头</label><small>可直接粘贴到 Excel<br>保留单元格内的换行</small></div></details></div><button class="text-button nb-grid-clear" data-nb="grid-clear-selection" ${disabled} title="清除选择" aria-label="清除选择">${tableIcon("close")}</button></div></div>`;
   }
   selectTableDimension(id, axis, index, extend) {
     let selection = this.tableSelections.get(id);
@@ -411,7 +436,8 @@ export class Notebook {
       const axis = button.dataset.nb === "grid-select-row" ? "row" : "column",
         pressed = !!selected(axis, Number(button.dataset[axis]));
       button.setAttribute("aria-pressed", String(pressed));
-      if (axis === "column") button.textContent = pressed ? "✓" : "□";
+      if (axis === "column")
+        button.innerHTML = tableIcon(pressed ? "check" : "square");
     }
     for (const area of $$("[data-grid-row]", element)) {
       area
@@ -426,9 +452,10 @@ export class Notebook {
     }
     const template = document.createElement("template");
     template.innerHTML = this.tableSelectionTools(cell);
-    $(".nb-grid-selection-tools", element).replaceChildren(
-      ...template.content.firstElementChild.childNodes,
-    );
+    const tools = $(".nb-grid-selection-tools", element),
+      next = template.content.firstElementChild;
+    tools.dataset.selected = next.dataset.selected;
+    tools.replaceChildren(...next.childNodes);
   }
   remapTableSelection(id, axis, deletedIndex) {
     const selection = this.tableSelections.get(id);
@@ -473,9 +500,11 @@ export class Notebook {
     main.style.minHeight = main.getBoundingClientRect().height + "px";
     try {
       const nextTools = $$(".nb-grid-tools", template.content);
-      $$(".nb-grid-tools", element).forEach((tools, index) =>
-        tools.replaceChildren(...nextTools[index].childNodes),
-      );
+      $$(".nb-grid-tools", element).forEach((tools, index) => {
+        if (nextTools[index].dataset.selected !== undefined)
+          tools.dataset.selected = nextTools[index].dataset.selected;
+        tools.replaceChildren(...nextTools[index].childNodes);
+      });
       grid.replaceChildren(...$(".nb-data-grid", template.content).childNodes);
       $("[data-csv-encoding]", element).value = encoding;
       this.layoutGrid(grid);
@@ -492,7 +521,11 @@ export class Notebook {
         } else if (focused.matches("[data-csv-encoding]"))
           selector = "[data-csv-encoding]";
         const target = selector && $(selector, element);
-        target?.focus({ preventScroll: true });
+        const focusTarget =
+          target?.offsetParent === null
+            ? target.closest("details")?.querySelector("summary")
+            : target;
+        (focusTarget || element).focus({ preventScroll: true });
         if (target && selection) target.setSelectionRange(...selection);
       }
     } finally {
@@ -761,6 +794,9 @@ export class Notebook {
     }
   }
   async handleClick(event) {
+    for (const menu of $$(".nb-grid-menu[open]", this.root)) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
     const button = event.target.closest("[data-nb]");
     if (!button) return;
     event.stopPropagation();
@@ -1082,6 +1118,12 @@ export class Notebook {
     }
   }
   keydown(event) {
+    if (event.key === "Escape") {
+      const menu = event.target.closest(".nb-grid-menu[open]");
+      for (const item of $$(".nb-grid-menu[open]", this.root))
+        item.open = false;
+      menu?.querySelector("summary")?.focus({ preventScroll: true });
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       event.stopPropagation();

@@ -892,6 +892,16 @@ const assert = require("node:assert/strict");
     const { parseCSV } = await import("../static/notebook-core.mjs");
     const clipboardRows = async () =>
       parseCSV(await page.evaluate(() => navigator.clipboard.readText()), "\t");
+    const insertSelected = async (side) => {
+      await singleColumn.locator("[data-grid-insert-menu] > summary").click();
+      await singleColumn.locator(`[data-nb="grid-insert-${side}"]`).click();
+      assert.equal(
+        await singleColumn
+          .locator("[data-grid-insert-menu]")
+          .getAttribute("open"),
+        null,
+      );
+    };
     await singleColumn
       .locator('[data-nb="grid-select-row"][data-row="1"]')
       .click();
@@ -909,6 +919,7 @@ const assert = require("node:assert/strict");
       .click();
     await singleColumn.locator('[data-nb="grid-copy"]').click();
     assert.deepEqual(await clipboardRows(), [copyRows[0], copyRows[2]]);
+    await singleColumn.locator("[data-grid-copy-options] > summary").click();
     await singleColumn.locator("[data-grid-copy-header]").check();
     await singleColumn.locator('[data-nb="grid-copy"]').click();
     assert.deepEqual(await clipboardRows(), [
@@ -916,10 +927,10 @@ const assert = require("node:assert/strict");
       copyRows[0],
       copyRows[2],
     ]);
-    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    await insertSelected("before");
     assert.equal(await field(1, 0).inputValue(), "");
     assert.equal(await field(2, 0).inputValue(), "第一项");
-    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    await insertSelected("after");
     assert.equal(await field(2, 0).inputValue(), "");
     assert.equal(await field(3, 0).inputValue(), "第一项");
     assert.match(await singleColumn.innerText(), /5 行 × 2 列/);
@@ -930,10 +941,10 @@ const assert = require("node:assert/strict");
     await singleColumn
       .locator('[data-nb="grid-select-column"][data-column="1"]')
       .click();
-    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    await insertSelected("before");
     assert.equal(await field(0, 0).inputValue(), "新列");
     assert.equal(await field(0, 1).inputValue(), "步骤");
-    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    await insertSelected("after");
     assert.equal(await field(0, 1).inputValue(), "新列");
     assert.equal(await field(0, 2).inputValue(), "步骤");
     assert.equal(await field(0, 3).inputValue(), "说明");
@@ -1041,13 +1052,25 @@ const assert = require("node:assert/strict");
     await singleColumn
       .locator('[data-nb="grid-select-row"][data-row="51"]')
       .click();
-    await singleColumn.locator('[data-nb="grid-insert-before"]').click();
+    await insertSelected("before");
     assert.equal(await field(51, 0).inputValue(), "");
     assert.equal(await field(52, 0).inputValue(), "51");
-    await singleColumn.locator('[data-nb="grid-insert-after"]').click();
+    await insertSelected("after");
     assert.equal(await field(52, 0).inputValue(), "");
     assert.equal(await field(53, 0).inputValue(), "51");
     assert.match(await singleColumn.innerText(), /72 行 × 2 列/);
+    await singleColumn.locator("[data-grid-copy-options] > summary").click();
+    const copyMenu = await singleColumn
+      .locator("[data-grid-copy-options] .nb-grid-menu-panel")
+      .boundingBox();
+    assert(copyMenu.x >= 0 && copyMenu.x + copyMenu.width <= 1440);
+    await page.keyboard.press("Escape");
+    assert.equal(
+      await singleColumn
+        .locator("[data-grid-copy-options]")
+        .getAttribute("open"),
+      null,
+    );
     if (process.env.UI_TABLE_SELECTION_CAPTURE)
       await singleColumn.screenshot({
         path: process.env.UI_TABLE_SELECTION_CAPTURE,
@@ -1058,6 +1081,12 @@ const assert = require("node:assert/strict");
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     );
+    await singleColumn.locator("[data-grid-insert-menu] > summary").click();
+    const mobileMenu = await singleColumn
+      .locator("[data-grid-insert-menu] .nb-grid-menu-panel")
+      .boundingBox();
+    assert(mobileMenu.x >= 0 && mobileMenu.x + mobileMenu.width <= 390);
+    await page.keyboard.press("Escape");
     if (process.env.UI_TABLE_SELECTION_MOBILE_CAPTURE)
       await singleColumn.screenshot({
         path: process.env.UI_TABLE_SELECTION_MOBILE_CAPTURE,
