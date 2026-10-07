@@ -775,6 +775,75 @@ const assert = require("node:assert/strict");
       await singleColumn.screenshot({
         path: process.env.UI_TABLE_MOBILE_CAPTURE,
       });
+    const stableGridAction = async (action, { row, column } = {}) => {
+      const selector = `[data-nb="${action}"]${row ? `[data-row="${row}"]` : ""}${column !== undefined ? `[data-column="${column}"]` : ""}`;
+      const button = singleColumn.locator(selector);
+      await button.scrollIntoViewIfNeeded();
+      const before = await singleColumn.evaluate((cell, setScroll) => {
+        const grid = cell.querySelector(".nb-data-grid");
+        if (setScroll) {
+          grid.scrollTop = Math.min(180, grid.scrollHeight - grid.clientHeight);
+          grid.scrollLeft = Math.min(100, grid.scrollWidth - grid.clientWidth);
+        }
+        return {
+          outer: cell.closest("#detail").scrollTop,
+          top: grid.scrollTop,
+          left: grid.scrollLeft,
+        };
+      }, !action.includes("delete"));
+      if (action.includes("delete"))
+        page.once("dialog", (dialog) => dialog.accept());
+      await button.click();
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      const after = await singleColumn.evaluate((cell) => {
+        const grid = cell.querySelector(".nb-data-grid");
+        return {
+          outer: cell.closest("#detail").scrollTop,
+          top: grid.scrollTop,
+          left: grid.scrollLeft,
+          maxTop: grid.scrollHeight - grid.clientHeight,
+          maxLeft: grid.scrollWidth - grid.clientWidth,
+          maxOuter:
+            cell.closest("#detail").scrollHeight -
+            cell.closest("#detail").clientHeight,
+        };
+      });
+      assert(
+        Math.abs(after.outer - Math.min(before.outer, after.maxOuter)) <= 2,
+        `${action} moved the notebook: ${JSON.stringify({ before, after })}`,
+      );
+      assert(
+        Math.abs(after.top - Math.min(before.top, after.maxTop)) <= 2,
+        `${action} lost table vertical position: ${JSON.stringify({ before, after })}`,
+      );
+      assert(
+        Math.abs(after.left - Math.min(before.left, after.maxLeft)) <= 2,
+        `${action} lost table horizontal position: ${JSON.stringify({ before, after })}`,
+      );
+    };
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 2560, height: 1440 },
+      { width: 1440, height: 2560 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      await stableGridAction("grid-add-row");
+      await stableGridAction("grid-delete-row", { row: 3 });
+      await stableGridAction("grid-add-column");
+      await stableGridAction("grid-delete-column", { column: 2 });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     await firstTableField.fill("");
     await secondTableField.fill("");
     assert(

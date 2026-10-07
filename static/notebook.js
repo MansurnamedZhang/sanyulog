@@ -222,12 +222,7 @@ export class Notebook {
     $("[data-cell-count]", this.root).textContent =
       this.queue.data.cells.length + " 个单元格";
     for (const area of $$("[data-source]", this.root)) this.grow(area);
-    for (const grid of $$(".nb-data-grid", this.root)) {
-      $("table", grid).style.minWidth =
-        88 + $$("thead [data-grid-col]", grid).length * 220 + "px";
-      for (const row of $$("tr", grid)) this.fitGridRow(row);
-      this.gridResizeObserver.observe(grid);
-    }
+    for (const grid of $$(".nb-data-grid", this.root)) this.layoutGrid(grid);
     this.mountRichEditors(focusId);
     if (focusId) {
       this.setActive(focusId);
@@ -334,6 +329,68 @@ export class Notebook {
         "",
       )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>文字自动换行，行高随内容调整。第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
   }
+  layoutGrid(grid) {
+    $("table", grid).style.minWidth =
+      88 + $$("thead [data-grid-col]", grid).length * 220 + "px";
+    for (const row of $$("tr", grid)) this.fitGridRow(row);
+    this.gridResizeObserver.observe(grid);
+  }
+  renderTable(cell) {
+    const element = this.cellElement(cell.id),
+      main = $(".nb-cell-main", element),
+      grid = $(".nb-data-grid", element),
+      focused = document.activeElement,
+      focusData = main.contains(focused) ? { ...focused.dataset } : null,
+      selection = focused.matches("textarea")
+        ? [
+            focused.selectionStart,
+            focused.selectionEnd,
+            focused.selectionDirection,
+          ]
+        : null,
+      encoding = $("[data-csv-encoding]", element).value,
+      oldMinHeight = main.style.minHeight,
+      scrolls = [];
+    for (let node = grid; node; node = node.parentElement) {
+      scrolls.push({ node, top: node.scrollTop, left: node.scrollLeft });
+    }
+    const template = document.createElement("template");
+    template.innerHTML = this.tableHTML(cell);
+    // Keep the notebook's height while new rows are measured. Otherwise the
+    // browser clamps its scroll position before long rows have grown again.
+    main.style.minHeight = main.getBoundingClientRect().height + "px";
+    try {
+      const nextTools = $$(".nb-grid-tools", template.content);
+      $$(".nb-grid-tools", element).forEach((tools, index) =>
+        tools.replaceChildren(...nextTools[index].childNodes),
+      );
+      grid.replaceChildren(...$(".nb-data-grid", template.content).childNodes);
+      $("[data-csv-encoding]", element).value = encoding;
+      this.layoutGrid(grid);
+      if (focusData) {
+        let selector;
+        if (focusData.gridRow !== undefined) {
+          selector = `[data-grid-row="${focusData.gridRow}"][data-grid-col="${focusData.gridCol}"]`;
+        } else if (focusData.nb) {
+          selector = `[data-nb="${focusData.nb}"]`;
+          if (focusData.row !== undefined)
+            selector += `[data-row="${focusData.row}"]`;
+          if (focusData.column !== undefined)
+            selector += `[data-column="${focusData.column}"]`;
+        } else if (focused.matches("[data-csv-encoding]"))
+          selector = "[data-csv-encoding]";
+        const target = selector && $(selector, element);
+        target?.focus({ preventScroll: true });
+        if (target && selection) target.setSelectionRange(...selection);
+      }
+    } finally {
+      main.style.minHeight = oldMinHeight;
+      for (const { node, top, left } of scrolls) {
+        node.scrollTop = top;
+        node.scrollLeft = left;
+      }
+    }
+  }
   saveTable(cell, rows) {
     const source = serializeCSV(rows);
     parseCSV(source);
@@ -366,7 +423,8 @@ export class Notebook {
       throw new Error("表格已发生变化，请重新导入");
     this.saveTable(cell, rows);
     this.tablePages.set(cell.id, 0);
-    this.renderCells();
+    this.renderTable(cell);
+    $(".nb-data-grid", element).scrollTop = 0;
     this.toast("已导入表格，第一行为表头");
   }
   filesHTML(ids) {
@@ -672,7 +730,9 @@ export class Notebook {
         }
         this.saveTable(cell, rows);
       }
-      this.renderCells();
+      this.renderTable(cell);
+      if (action === "grid-prev" || action === "grid-next")
+        $(".nb-data-grid", this.cellElement(id)).scrollTop = 0;
       return;
     }
     if (action === "rich-table") {
@@ -920,7 +980,7 @@ export class Notebook {
           r.forEach((v, j) => (rows[startRow + i][startCol + j] = v)),
         );
         this.saveTable(cell, rows);
-        this.renderCells();
+        this.renderTable(cell);
       } catch (e) {
         this.toast(e.message, true);
       }
