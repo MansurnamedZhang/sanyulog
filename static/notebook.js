@@ -56,6 +56,20 @@ export class Notebook {
     this.toast = toast;
     this.writeDraft = writeDraft;
     this.tablePages = new Map();
+    this.gridHeights = new WeakMap();
+    this.gridWidths = new WeakMap();
+    this.gridResizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width;
+        if (width <= 0 || this.gridWidths.get(entry.target) === width) continue;
+        this.gridWidths.set(entry.target, width);
+        requestAnimationFrame(() => {
+          if (this.controller.signal.aborted || !entry.target.isConnected)
+            return;
+          for (const row of $$("tr", entry.target)) this.fitGridRow(row);
+        });
+      }
+    });
     this.controller = new AbortController();
     this.active = "";
     this.editing = new Set();
@@ -130,6 +144,7 @@ export class Notebook {
     await this.queue.flush();
   }
   dispose() {
+    this.gridResizeObserver.disconnect();
     for (const editor of this.richEditors.values()) editor.destroy();
     this.richEditors.clear();
     this.queue.dispose();
@@ -198,6 +213,7 @@ export class Notebook {
       .join("");
   }
   renderCells(focusId) {
+    this.gridResizeObserver.disconnect();
     for (const editor of this.richEditors.values()) editor.destroy();
     this.richEditors.clear();
     $("[data-cells]", this.root).innerHTML = this.queue.data.cells
@@ -206,6 +222,12 @@ export class Notebook {
     $("[data-cell-count]", this.root).textContent =
       this.queue.data.cells.length + " 个单元格";
     for (const area of $$("[data-source]", this.root)) this.grow(area);
+    for (const grid of $$(".nb-data-grid", this.root)) {
+      $("table", grid).style.minWidth =
+        88 + $$("thead [data-grid-col]", grid).length * 220 + "px";
+      for (const row of $$("tr", grid)) this.fitGridRow(row);
+      this.gridResizeObserver.observe(grid);
+    }
     this.mountRichEditors(focusId);
     if (focusId) {
       this.setActive(focusId);
@@ -304,13 +326,13 @@ export class Notebook {
       page = Math.min(this.tablePages.get(cell.id) || 0, pages - 1);
     this.tablePages.set(cell.id, page);
     const rowHTML = (row, r) =>
-      `<tr><th>${r === 0 ? "表头" : r}</th>${row.map((v, c) => `<td><textarea data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列">×</button>` : ""}</td>`).join("")}${r ? `<td><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行">×</button></td>` : "<td></td>"}</tr>`;
-    return `<div class="nb-grid-tools"><button class="button small" data-nb="grid-add-row">＋ 行</button><button class="button small" data-nb="grid-add-column">＋ 列</button><button class="button small" data-nb="grid-import">导入 CSV / TSV</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">导出 CSV</button><span>${rows.length - 1} 行 × ${rows[0].length} 列</span></div><div class="nb-data-grid"><table><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
+      `<tr><th>${r === 0 ? "表头" : r}</th>${row.map((v, c) => `<td><textarea rows="1" wrap="soft" data-grid-row="${r}" data-grid-col="${c}" aria-label="第 ${r} 行第 ${c + 1} 列">${esc(v)}</textarea>${r === 0 ? `<button class="text-button" data-nb="grid-delete-column" data-column="${c}" title="删除此列">×</button>` : ""}</td>`).join("")}${r ? `<td class="nb-grid-row-action"><button class="text-button" data-nb="grid-delete-row" data-row="${r}" title="删除此行">×</button></td>` : '<td class="nb-grid-row-action"></td>'}</tr>`;
+    return `<div class="nb-grid-tools"><button class="button small" data-nb="grid-add-row">＋ 行</button><button class="button small" data-nb="grid-add-column">＋ 列</button><button class="button small" data-nb="grid-import">导入 CSV / TSV</button><select data-csv-encoding aria-label="CSV 编码"><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select><input type="file" data-csv-input accept=".csv,.tsv,text/csv" hidden><button class="button small" data-nb="grid-export">导出 CSV</button><span>${rows.length - 1} 行 × ${rows[0].length} 列</span></div><div class="nb-data-grid"><table><colgroup><col class="nb-grid-index">${rows[0].map(() => "<col>").join("")}<col class="nb-grid-action"></colgroup><thead>${rowHTML(rows[0], 0)}</thead><tbody>${rows
       .slice(1 + page * 50, 1 + (page + 1) * 50)
       .map((r, i) => rowHTML(r, 1 + page * 50 + i))
       .join(
         "",
-      )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
+      )}</tbody></table></div><div class="nb-grid-tools"><button class="text-button" data-nb="grid-prev" ${page === 0 ? "disabled" : ""}>上一页</button><span>${page + 1} / ${pages}</span><button class="text-button" data-nb="grid-next" ${page === pages - 1 ? "disabled" : ""}>下一页</button><small>文字自动换行，行高随内容调整。第一行为表头；回车或粘贴多段文字保留在当前格，Excel 区域按多格粘贴；CSV 请使用导入。最多 1000 行数据、50 列。</small></div>`;
   }
   saveTable(cell, rows) {
     const source = serializeCSV(rows);
@@ -382,11 +404,39 @@ export class Notebook {
     );
   }
   grow(area) {
+    area.style.height = Math.max(64, this.textareaHeight(area)) + "px";
+  }
+  fitGridRow(row) {
+    const areas = $$("[data-grid-row]", row);
+    let height = 44;
+    for (const area of areas) {
+      const width = area.getBoundingClientRect().width;
+      if (!width) return;
+      let measured = this.gridHeights.get(area);
+      if (
+        !measured ||
+        measured.width !== width ||
+        measured.value !== area.value
+      ) {
+        measured = {
+          width,
+          value: area.value,
+          height: this.textareaHeight(area),
+        };
+        this.gridHeights.set(area, measured);
+      }
+      height = Math.max(height, measured.height);
+    }
+    for (const area of areas) area.style.height = height + "px";
+  }
+  textareaHeight(area) {
     // Measure off-screen: shrinking the focused textarea clamps its ancestor's
     // scroll position and can move the caret by an entire viewport.
     const style = getComputedStyle(area);
     const measure = area.cloneNode(false);
     measure.removeAttribute("data-source");
+    measure.removeAttribute("data-grid-row");
+    measure.removeAttribute("data-grid-col");
     measure.removeAttribute("id");
     measure.setAttribute("aria-hidden", "true");
     measure.tabIndex = -1;
@@ -401,6 +451,7 @@ export class Notebook {
       height: "0",
       minHeight: "0",
       maxHeight: "none",
+      maxWidth: "none",
       overflow: "hidden",
       boxSizing: style.boxSizing,
       font: style.font,
@@ -419,7 +470,7 @@ export class Notebook {
       parseFloat(style.borderTopWidth) +
       parseFloat(style.borderBottomWidth);
     measure.remove();
-    area.style.height = Math.max(64, height) + "px";
+    return height;
   }
   cell(id = this.active) {
     return this.queue.data.cells.find((c) => c.id === id);
@@ -445,6 +496,7 @@ export class Notebook {
       rows[Number(target.dataset.gridRow)][Number(target.dataset.gridCol)] =
         target.value;
       this.saveTable(cell, rows);
+      this.fitGridRow(target.closest("tr"));
     } else if (target.matches("[data-source]")) {
       const cell = this.cell(target.closest("[data-cell]").dataset.cell);
       cell.source = target.value;

@@ -683,13 +683,106 @@ const assert = require("node:assert/strict");
       .last()
       .getAttribute("data-cell");
     const singleColumn = page.locator(`[data-cell="${singleColumnId}"]`);
-    for (let i = 0; i < 2; i++) {
-      page.once("dialog", (dialog) => dialog.accept());
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn.locator('[data-nb="grid-delete-column"]').last().click();
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    const tableText =
+      "记录本次训练参数与验证结果，比较样本质量、运行时间和生成稳定性。".repeat(
+        18,
+      );
+    const firstTableField = singleColumn.locator(
+      '[data-grid-row="1"][data-grid-col="0"]',
+    );
+    const secondTableField = singleColumn.locator(
+      '[data-grid-row="1"][data-grid-col="1"]',
+    );
+    await firstTableField.fill(tableText);
+    await secondTableField.fill("workflow_identifier_".repeat(24));
+    const desktopTableLayout = await firstTableField.evaluate((area) => ({
+      fieldWidth: area.getBoundingClientRect().width,
+      cellWidth: area.closest("td").getBoundingClientRect().width,
+      height: area.getBoundingClientRect().height,
+      contentHeight: area.scrollHeight,
+      visibleHeight: area.clientHeight,
+      rowIndexWidth: area
+        .closest("tr")
+        .firstElementChild.getBoundingClientRect().width,
+      actionWidth: area.closest("tr").lastElementChild.getBoundingClientRect()
+        .width,
+    }));
+    assert(
+      desktopTableLayout.fieldWidth >= desktopTableLayout.cellWidth - 4,
+      "Table inputs fill wide-screen cells",
+    );
+    assert(
+      desktopTableLayout.rowIndexWidth <= 56 &&
+        desktopTableLayout.actionWidth <= 40,
+      "Table utility columns stay compact",
+    );
+    assert(
+      desktopTableLayout.contentHeight <= desktopTableLayout.visibleHeight + 1,
+      "Wrapped text is fully visible without an inner scrollbar",
+    );
+    assert.equal(
+      await firstTableField.inputValue(),
+      tableText,
+      "Soft wrapping preserves the original text",
+    );
+    assert.equal(
+      (await firstTableField.boundingBox()).height,
+      (await secondTableField.boundingBox()).height,
+      "Inputs fill the whole row height",
+    );
+    if (process.env.UI_TABLE_CAPTURE)
+      await singleColumn.screenshot({ path: process.env.UI_TABLE_CAPTURE });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction((id) => {
+      const area = document.querySelector(
+        `[data-cell="${id}"] [data-grid-row="1"][data-grid-col="0"]`,
+      );
+      return (
+        area.scrollHeight <= area.clientHeight + 1 && area.clientHeight > 100
+      );
+    }, singleColumnId);
+    assert(
+      (await firstTableField.boundingBox()).height > desktopTableLayout.height,
+      "Table rows adapt when columns become narrower",
+    );
+    const mobileTableLayout = await firstTableField.evaluate((area) => ({
+      fieldWidth: area.getBoundingClientRect().width,
+      cellWidth: area.closest("td").getBoundingClientRect().width,
+      tableWidth: area.closest("table").getBoundingClientRect().width,
+      minimumWidth: getComputedStyle(area.closest("table")).minWidth,
+    }));
+    assert(
+      mobileTableLayout.fieldWidth >= 218,
+      "Mobile columns keep enough width for reading: " +
+        JSON.stringify(mobileTableLayout),
+    );
+    assert(
       await singleColumn
-        .locator('[data-nb="grid-delete-column"]')
-        .last()
-        .click();
-    }
+        .locator(".nb-data-grid")
+        .evaluate((grid) => grid.scrollWidth > grid.clientWidth),
+      "Mobile tables offer horizontal scrolling",
+    );
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      "Wide tables scroll inside the grid on mobile",
+    );
+    if (process.env.UI_TABLE_MOBILE_CAPTURE)
+      await singleColumn.screenshot({
+        path: process.env.UI_TABLE_MOBILE_CAPTURE,
+      });
+    await firstTableField.fill("");
+    await secondTableField.fill("");
+    assert(
+      (await firstTableField.boundingBox()).height <= 52,
+      "Empty rows shrink back after clearing text",
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await singleColumn.locator('[data-nb="grid-delete-column"]').last().click();
     page.once("dialog", (dialog) => dialog.accept());
     await singleColumn.locator('[data-nb="grid-delete-row"]').last().click();
     assert.match(await singleColumn.innerText(), /1 行 × 1 列/);

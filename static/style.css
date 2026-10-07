@@ -1192,20 +1192,28 @@ dialog form {
 }
 .nb-data-grid table {
   border-collapse: collapse;
-  width: max-content;
-  min-width: 100%;
+  table-layout: fixed;
+  width: 100%;
+}
+.nb-grid-index {
+  width: 52px;
+}
+.nb-grid-action {
+  width: 36px;
 }
 .nb-data-grid td,
 .nb-data-grid th {
   border: 1px solid #e2e7dd;
-  padding: 3px;
+  padding: 0;
   vertical-align: top;
 }
+.nb-data-grid td {
+  position: relative;
+}
 .nb-data-grid th {
-  min-width: 40px;
   font-size: 12px;
   font-weight: normal;
-  padding: 10px;
+  padding: 12px 4px;
   color: #69745f;
 }
 .nb-data-grid thead {
@@ -1215,23 +1223,47 @@ dialog form {
   z-index: 1;
 }
 .nb-data-grid textarea {
-  display: inline-block;
-  width: 170px;
-  min-height: 42px;
-  resize: vertical;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  resize: none;
+  overflow: hidden;
   border: 0;
   border-radius: 3px;
   background: transparent;
-  padding: 8px;
+  padding: 10px 12px;
   font: inherit;
-  vertical-align: top;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .nb-data-grid textarea:focus {
   outline: 2px solid #94a57b;
+  outline-offset: -2px;
+  box-shadow: none;
   background: #fff;
 }
 .nb-data-grid thead textarea {
   font-weight: 600;
+  padding-right: 36px;
+}
+.nb-data-grid [data-nb="grid-delete-column"] {
+  position: absolute;
+  right: 4px;
+  top: 8px;
+  width: 24px;
+  height: 28px;
+  padding: 0;
+}
+.nb-data-grid .nb-grid-row-action {
+  text-align: center;
+  padding-top: 8px;
+}
+.nb-data-grid [data-nb="grid-delete-row"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .nb-markdown li > ul,
