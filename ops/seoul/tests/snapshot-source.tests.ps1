@@ -157,4 +157,24 @@ print('PASS exact DB endpoint, mounts, Compose and network identity')
 '@
 $identityResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $identityHarness
 Assert-True ($LASTEXITCODE -eq 0 -and $identityResult -eq 'PASS exact DB endpoint, mounts, Compose and network identity') 'remote identity gate failed'
+$networkHarness=@'
+import ast,re,sys
+source=sys.stdin.read();tree=ast.parse(source)
+fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='check_network_binding')
+ns={'re':re,'DB_CONTAINER':'dev-postgres'}
+exec(compile(ast.Module(body=[fn],type_ignores=[]),'<network>','exec'),ns)
+check=ns['check_network_binding']; key='dev-databases_default'; nid='a'*64
+app={key:{'NetworkID':nid}}; db={key:{'NetworkID':nid,'Aliases':['dev-postgres','postgres']}}
+assert check(app,db)
+for first,second in [
+ ({key:{}},{key:{'Aliases':['dev-postgres']}}),
+ ({key:{'NetworkID':''}},{key:{'NetworkID':'','Aliases':['dev-postgres']}}),
+ ({key:{'NetworkID':'bad'}},{key:{'NetworkID':'bad','Aliases':['dev-postgres']}}),
+ ({key:{'NetworkID':nid}},{key:{'NetworkID':'b'*64,'Aliases':['dev-postgres']}}),
+ ({key:{'NetworkID':nid}},{key:{'NetworkID':nid,'Aliases':['postgres']}})]:
+    assert not check(first,second), 'unverified network identity passed'
+print('PASS nonempty shared NetworkID and DB alias')
+'@
+$networkResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $networkHarness
+Assert-True ($LASTEXITCODE -eq 0 -and $networkResult -eq 'PASS nonempty shared NetworkID and DB alias') 'remote network gate failed'
 Write-Host 'GREEN: snapshot manifest and transfer gates passed (local fixtures; no network).'

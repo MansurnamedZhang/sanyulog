@@ -198,6 +198,15 @@ def copy_tree(source,dest):
         for name in sorted(files): members.append(copy_file(current/name,dest/rel/name))
 def docker_state(name):
     return json.loads(run(['docker','inspect','--format','{{json .State}}',name]))
+def check_network_binding(appnets,dbnets):
+    network='dev-databases_default'
+    if not isinstance(appnets,dict) or not isinstance(dbnets,dict): return False
+    app=appnets.get(network); db=dbnets.get(network)
+    if not isinstance(app,dict) or not isinstance(db,dict): return False
+    identifier=app.get('NetworkID')
+    aliases=db.get('Aliases')
+    return (isinstance(identifier,str) and re.fullmatch('[a-f0-9]{64}',identifier) is not None and
+            identifier==db.get('NetworkID') and isinstance(aliases,list) and DB_CONTAINER in aliases)
 def check_source_identity(database_url,mounts,labels,network_bound,compose_owner_ok):
     url=urllib.parse.urlsplit(database_url)
     if (url.scheme not in ('postgres','postgresql') or
@@ -233,10 +242,7 @@ try:
     if run(['docker','inspect','--format','{{.Name}}',DB_CONTAINER]).decode().strip()!='/dev-postgres': raise RuntimeError('database_name_mismatch')
     appnets=json.loads(run(['docker','inspect','--format','{{json .NetworkSettings.Networks}}','process-log']))
     dbnets=json.loads(run(['docker','inspect','--format','{{json .NetworkSettings.Networks}}',DB_CONTAINER]))
-    shared=bool(isinstance(appnets,dict) and isinstance(dbnets,dict) and
-        'dev-databases_default' in appnets and 'dev-databases_default' in dbnets and
-        appnets['dev-databases_default'].get('NetworkID')==dbnets['dev-databases_default'].get('NetworkID') and
-        DB_CONTAINER in (dbnets['dev-databases_default'].get('Aliases') or []))
+    shared=check_network_binding(appnets,dbnets)
     mounts=json.loads(run(['docker','inspect','--format','{{json .Mounts}}','process-log']))
     labels=json.loads(run(['docker','inspect','--format','{{json .Config.Labels}}','process-log']))
     # Docker has no field projection for one Env entry on a stopped container.
