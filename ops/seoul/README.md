@@ -198,3 +198,22 @@ if (-not (Test-SanyuCopiedFiles '<本机受限临时目录>\snapshot-<UTC时间>
 `-Mode verify` 的输出只标记 `manifestOnly=true, bytesVerified=false`：它验证 JSON 形状，**不是**字节证据。`Test-SanyuCopiedFiles` 对清单中的**每个文件**重算长度与 SHA-256，拒绝祖先/子级 reparse point、未列出的文件、缺件和 manifest 本身摘要不符；`Test-SanyuTransferIdentity` 只比较两端清单的成员元数据，绝不能单独用作传输证明。清单目前未枚举嵌套空目录，转运时还须在源、本机、首尔各自对相对目录路径（包括空目录）做受限清单并逐项比较；缺少任一目录就停止。之后只把这一精确目录上传至首尔 `/home/ubuntu/backups/sanyulog/` 下全新的 `0700` 子目录，普通文件保持 `0600`，在首尔**再次逐项重算**并与源清单的 path/bytes/SHA-256 对比，检查 `pg_restore -l`、auth SQLite `quick_check` 与原密钥长度。不要仅凭 SCP 成功或文件数相等宣布迁移完成。控制端受限暂存只有在首尔校验通过后才可按精确路径清理；源备份长期保留。任何一步失败，保持首尔维护页，不恢复/切换目标；优先重启并检查源应用健康，再诊断。若源/目标在此后新增写入，旧清单立即失效，必须重新维护窗口获取一致快照。
 
 当前脚本只实现源快照及本机逐字节校验函数，**不自动执行 SCP、首尔端哈希核对或生产恢复**；这些仍是操作员独立验收门禁，不能把本地 GREEN 说成 Task 3 已在生产完成。
+
+## Task 4：迁移证据比较器（不执行恢复）
+
+`verify-migration.ps1` 是离线、只读的**证据比较器**。它不连接 SSH、PostgreSQL、R2 或 Cloudflare，不读密钥、不上传对象、不断言线上字节已检查，也不授权切换。先运行 `pwsh -NoProfile -File ops/seoul/tests/verify-migration.tests.ps1`；测试只使用本地假数据。运行真实比较时，把来自**独立、刚完成的只读探测**的 JSON 放在受限证据目录（Windows 当前用户和 SYSTEM 独占 ACL；不得提交 Git），然后运行：
+
+```powershell
+pwsh -NoProfile -File ops/seoul/verify-migration.ps1 `
+  -EvidencePath '<受限证据目录>\migration-evidence.json'
+```
+
+退出码 0 只表示**给定证据内部**没有比较冲突；输出仍固定 `evidenceOnly=true`、`liveBytesVerified=false`、`cutoverAuthorized=false`。退出码 2 或任一 blocker 必须保持维护页，不能切换。比较器无法证明 JSON 的采集者真实查询了线上系统，更无法替代 Task 3 的逐字节传输校验、PG18 实际恢复、R2 每对象独立 HEAD/GET、原密钥解密验证、私有桶匿名拒绝和用户重登。上述实测由主执行者单独记录、复核并确认；不要把 fixture 测试数据当成生产迁移证据。
+
+证据 schemaVersion=1，顶层 `complete`、`source`、`target`、`r2` 必须齐全。`source.host=172.16.240.13`、`sourceStopped=true`、`snapshotComplete=true`；`target.host=43.131.245.43`、`postgresMajor=18`、`restoreComplete=true`。两侧同名字段 `snapshotManifestSha256`、`authDbSha256`、`storageKeySha256`、`accountRowsSha256`、`sessionRowsSha256` 必须是小写 64 位 SHA-256 且完全相等；`sessionCount` 同值。后两种行摘要必须覆盖认证库中**全部账号（包括停用、无 schema）及全部会话的所有列**，按预先固定的列序/主键序和字节编码规范生成；不能用账号数或密码散列摘要代替。`authDbSha256` 是静态快照文件及安装后未启动应用前的原始文件摘要；若应用已使 SQLite WAL/会话发生合法写入，应重新取得受控一致快照并核对行级摘要，不能把变化忽略或伪造相等。
+
+`accounts` 每项包含 `storageId`、布尔 `enabled`/`initialized`；`owner` 或 32 位小写十六进制 storage ID 才合法。源和目标必须逐项相等，未初始化的停用账号也必须在两端出现，但不能凭空创建其 PostgreSQL schema。`database` 对每个已初始化账号记录其准确 schema（owner 为 `public`，其他账号为 `process_log_user_<storageId>`）以及每张表的 `name`、`rows`、`normalizedSha256`；内容摘要应由只读事务逐表对所有行和所有列做版本化、稳定编码及确定排序后得出，不能只看行数。附件表行数之和须等于媒体条目的 `references` 总和。证据生产者还须独立从数据库有效引用生成 `media`，每项包含 `storageId`、精确 `v1/<storageId>/<plaintextSha256>` key、明文字节数/摘要、**本地密文字节数/摘要**和正整数引用次数。不得从 R2 列表反推数据库引用，不能把本地孤儿计入有效媒体。
+
+`r2.accountId` 固定为本项目已核实的 Cloudflare account，`bucket=sanyulog-media`，`listComplete=true` 仅在整桶所有分页完整列出后设置。`objects` 必须与源有效媒体 key 精确一一对应，不能多出 fixture、孤儿或其它前缀对象。每对象 `headBytes` 为 HEAD 的 ContentLength、`headSha256` 为 HEAD 中 `ciphertext-sha256` 元数据；`getBytes` 和 `getSha256` 必须由**实际 GET 完整读回密文字节**独立计算，四者与源/目标本地密文一致。证据生产者还须用原始根密钥解密读回密文并独立核对明文 SHA-256/字节数；比较器本身不会拿到或读取该密钥。只有确认 managed `r2.dev` 与 custom public domain 都关闭，才设 `publicDomainsDisabled=true`；`anonymousExistingObjectStatus=403` 必须是在一个确实存在的当前对象上实测，不能用不存在 key 的 404 代替。
+
+生产恢复操作不在脚本内：先核对 PG18 服务端和 pg_restore major/隔离卷，完整恢复源 dump/auth.db/原 32 字节 key/全量本地密文，核对身份、权限与散列；运行 `r2_reconcile.py inventory` dry-run，拒绝缺失/无效本地引用；仅对明确账号逐个执行 `sync --apply --storage-id <id> --bucket sanyulog-media`，只上传数据库当前有效引用。每次操作前复核项目身份、桶和维护页仍有效，失败即停留在维护页，不删除原站或 fixture 卷。最终成功声明必须来自主执行者的生产实测证据，而非此脚本退出码。
