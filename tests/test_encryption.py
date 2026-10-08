@@ -4,11 +4,100 @@ import tempfile
 import unittest
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from unittest.mock import patch
 from pathlib import Path
 from store import Store
 
 class EncryptionTests(unittest.TestCase):
+    def test_backup_includes_committed_ordinary_process_writes_in_wal(self):
+        # A raw copy of process.db misses committed WAL frames. The writer uses
+        # the ordinary Store API; a separate SQLite handle only keeps WAL alive.
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            key = root / 'key'; key.write_bytes(os.urandom(32))
+            s = Store(root / 'data', encryption_key_file=key)
+            p = s.create_project({'name':'project'})
+            r = s.create_record({'project_id':p['id'], 'title':'before', 'goal':'before'})
+            a = s.add_attachment(r['id'], 'file', b'original', 'text/plain')
+            code = ('from store import Store; import sqlite3,sys\n'
+                    's=Store(sys.argv[1],encryption_key_file=sys.argv[2])\n'
+                    'anchor=sqlite3.connect(s.db)\n'
+                    'anchor.execute("PRAGMA journal_mode=WAL")\n'
+                    'anchor.execute("BEGIN")\n'
+                    'anchor.execute("SELECT count(*) FROM records").fetchone()\n'
+                    's.update_record(sys.argv[3],dict(version=1,title="committed",goal="committed"))\n'
+                    'print("committed",flush=True)\n'
+                    'sys.stdin.readline()\n'
+                    'anchor.close()\n')
+            child = subprocess.Popen([sys.executable, '-c', code, str(s.root), str(key), r['id']],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(), 'committed')
+                backup = s.backup()
+            finally:
+                _, errors = child.communicate('\n', timeout=10)
+            self.assertEqual(child.returncode, 0, errors)
+            copy = Store(root / 'copy', encryption_key_file=key)
+            copy.restore(backup)
+            with copy.connection() as c:
+                self.assertEqual(c.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            actual = copy.get_record(r['id'])
+            self.assertEqual((actual['title'], actual['goal'], actual['version']), ('committed', 'committed', 2))
+            self.assertEqual(copy.read_attachment(a['id'])[1], b'original')
+
+    def test_restore_waits_for_ordinary_connection_commit_and_close(self):
+        # POSIX can replace an open SQLite DB inode; Windows instead errors.
+        # Both platforms must wait at the stable barrier BEFORE opening/swapping.
+        from store import media_lock
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            key = root / 'key'; key.write_bytes(os.urandom(32))
+            s = Store(root / 'data', encryption_key_file=key)
+            p = s.create_project({'name':'before'})
+            backup = s.backup()
+            code = ('from store import Store; import sys\n'
+                    's=Store(sys.argv[1],encryption_key_file=sys.argv[2])\n'
+                    'with s.connection() as c:\n'
+                    ' c.execute("UPDATE projects SET name=? WHERE id=?",(s.cipher.seal("committed-before-restore","name"),sys.argv[3]))\n'
+                    ' print("transaction-open",flush=True)\n'
+                    ' sys.stdin.readline()\n')
+            child = subprocess.Popen([sys.executable, '-c', code, str(s.root), str(key), p['id']],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            attempted, finished = threading.Event(), threading.Event()
+            @contextmanager
+            def observed_lock(path):
+                attempted.set()
+                with media_lock(path):
+                    yield
+            def restore():
+                try:
+                    s.restore(backup)
+                finally:
+                    finished.set()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                try:
+                    self.assertEqual(child.stdout.readline().strip(), 'transaction-open')
+                    with patch('store.media_lock', observed_lock):
+                        future = pool.submit(restore)
+                        self.assertTrue(attempted.wait(5), 'restore did not reach lifecycle barrier')
+                        was_blocked = not finished.wait(0.3)
+                        _, errors = child.communicate('\n', timeout=10)
+                        future.result(timeout=10)
+                    self.assertTrue(was_blocked, 'restore passed an open ordinary transaction')
+                    self.assertEqual(child.returncode, 0, errors)
+                finally:
+                    if child.poll() is None:
+                        child.communicate('\n', timeout=10)
+            self.assertEqual(s.state()['projects'][0]['name'], 'before')
+            copy = Store(root / 'pre-restore-copy', encryption_key_file=key)
+            copy.restore(next((s.root / 'backups').glob('before-restore-*.zip')).read_bytes())
+            self.assertEqual(copy.state()['projects'][0]['name'], 'committed-before-restore')
+            with copy.connection() as c:
+                self.assertEqual(c.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+
     def test_restore_backup_is_reentrant_inside_same_account_media_lock(self):
         from store import media_lock
         with tempfile.TemporaryDirectory() as root:
@@ -49,7 +138,8 @@ class EncryptionTests(unittest.TestCase):
                     for operation in (lambda: s.add_attachment(r['id'], 'new', b'new', 'text/plain'),
                                       lambda: s.delete_attachment(a['id']), lambda: s.delete_record(r['id']),
                                       lambda: s.delete_project(p['id']), lambda: s.restore(backup),
-                                      s.encrypt_attachment_files, s.backup):
+                                      s.encrypt_attachment_files, s.backup, s.state,
+                                      lambda: s.create_project({'name':'blocked ordinary write'})):
                         with self.subTest(operation=operation), self.assertRaises(ValueError): operation()
             finally:
                 child.communicate('\n', timeout=10)

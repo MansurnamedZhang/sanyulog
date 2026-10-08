@@ -272,12 +272,15 @@ class Store:
 
     @contextmanager
     def connection(self):
-        with self.lock:
+        # Every live application connection participates, not only media
+        # mutations: restore must never replace an inode still open to a reader
+        # or ordinary writer. Keep the barrier through commit/rollback + close.
+        with self.lock, self.media_guard():
             c = sqlite3.connect(self.db, timeout=20)
-            c.row_factory = self.cipher.sqlite_row
-            c.execute('PRAGMA foreign_keys=ON')
-            c.execute('PRAGMA secure_delete=ON')
             try:
+                c.row_factory = self.cipher.sqlite_row
+                c.execute('PRAGMA foreign_keys=ON')
+                c.execute('PRAGMA secure_delete=ON')
                 with c:
                     yield c
             finally:
@@ -617,16 +620,26 @@ class Store:
         return '\n'.join(lines)
 
     def backup(self):
-        with self.lock, self.media_guard():
-            with self.connection() as c:
-                filenames = [r['file'] for r in c.execute('SELECT DISTINCT file FROM attachments')]
-            total_size = self.db.stat().st_size + sum((self.files / name).stat().st_size for name in filenames)
+        with self.lock, self.media_guard(), tempfile.TemporaryDirectory(dir=self.root) as directory:
+            # SQLite's snapshot includes committed WAL frames and cannot tear
+            # across database pages. Never copy the live main DB file directly.
+            snapshot = Path(directory) / 'process.db'
+            target = sqlite3.connect(snapshot)
+            try:
+                with self.connection() as source:
+                    source.backup(target)
+                target.execute('PRAGMA journal_mode=DELETE')
+                filenames = [r[0] for r in target.execute('SELECT DISTINCT file FROM attachments')]
+            finally:
+                target.close()
+            total_size = snapshot.stat().st_size + sum((self.files / name).stat().st_size for name in filenames)
             if total_size > MAX_BACKUP_BYTES:
                 raise ValueError('当前数据超过完整备份的 250 MB 上限，无法生成可恢复的备份。现有数据保持不变。')
             out = io.BytesIO()
-            # All writes are serialized and each connection closes before snapshot.
+            # Attachment references and database bytes come from one closed
+            # snapshot; the media guard protects the referenced ciphertexts.
             with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-                z.write(self.db, 'process.db')
+                z.write(snapshot, 'process.db')
                 for filename in filenames:
                     z.write(self.files / filename, 'attachments/'+filename)
             return self.cipher.encrypt(out.getvalue(), 'backup')
