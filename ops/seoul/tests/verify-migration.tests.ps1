@@ -42,6 +42,8 @@ function Reject([string]$name,[scriptblock]$mutate) {
 $valid=Test-SanyuMigrationEvidence (Fixture)
 Assert $valid.ok 'valid complete evidence rejected'
 Assert ($valid.evidenceOnly -and -not $valid.liveBytesVerified -and -not $valid.cutoverAuthorized) 'comparison falsely claimed live proof'
+$private401=Fixture;$private401.r2.anonymousExistingObjectStatus=401
+Assert (Test-SanyuMigrationEvidence $private401).ok 'existing-object anonymous 401 denial rejected'
 Reject 'source writable' {param($f) $f.source.sourceStopped=$false}
 Reject 'sourceStopped numeric one' {param($f) $f.source.sourceStopped=1}
 Reject 'incomplete snapshot' {param($f) $f.source.snapshotComplete=$false}
@@ -80,7 +82,10 @@ Reject 'listComplete numeric one' {param($f) $f.r2.listComplete=1}
 Reject 'R2 public domain' {param($f) $f.r2.publicDomainsDisabled=$false}
 Reject 'publicDomainsDisabled numeric one' {param($f) $f.r2.publicDomainsDisabled=1}
 Reject 'R2 anonymous readable' {param($f) $f.r2.anonymousExistingObjectStatus=200}
+Reject 'R2 nonexistent 404' {param($f) $f.r2.anonymousExistingObjectStatus=404}
+Reject 'R2 no HTTP status' {param($f) $f.r2.anonymousExistingObjectStatus=0}
 Reject 'string anonymous status' {param($f) $f.r2.anonymousExistingObjectStatus='403'}
+Reject 'string anonymous 401' {param($f) $f.r2.anonymousExistingObjectStatus='401'}
 Reject 'wrong bucket' {param($f) $f.r2.bucket='other'}
 Reject 'wrong account' {param($f) $f.r2.accountId='other'}
 Reject 'invalid media key' {param($f) $f.source.media[0].key='v1/owner/other'}

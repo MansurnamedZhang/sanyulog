@@ -90,7 +90,7 @@ function Test-SanyuMigrationEvidence {
     $r2=$Evidence['r2']
     if ($r2 -isnot [Collections.IDictionary] -or $r2['accountId'] -cne '0910a2f37a347c249c2dce42169b9b65' -or
         $r2['bucket'] -cne 'sanyulog-media' -or -not (Test-SanyuMigrationTrue $r2['listComplete']) -or
-        -not (Test-SanyuMigrationTrue $r2['publicDomainsDisabled']) -or -not (Test-SanyuMigrationCount $r2['anonymousExistingObjectStatus']) -or $r2['anonymousExistingObjectStatus'] -ne 403 -or $r2['objects'] -isnot [array]) {
+        -not (Test-SanyuMigrationTrue $r2['publicDomainsDisabled']) -or -not (Test-SanyuMigrationCount $r2['anonymousExistingObjectStatus']) -or $r2['anonymousExistingObjectStatus'] -notin @(401,403) -or $r2['objects'] -isnot [array]) {
         $errors.Add('r2_identity_privacy_or_inventory');
     } elseif ($source) {
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
