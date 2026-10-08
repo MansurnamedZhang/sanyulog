@@ -39,6 +39,8 @@ Thumbs.db
 .npm-cache/
 .ui-review/
 .superdesign/
+.worktrees/
+.superpowers/
 
 # Server encryption key material
 secrets/
