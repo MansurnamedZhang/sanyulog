@@ -87,7 +87,7 @@ Task 1 预检原样执行于首次 staging 前。资源建好后预检会因“�
 
 每个根目录下仅使用 `auth/`、`attachments/`、`state/`、`runtime/`、`secrets/`。创建/复制前逐层拒绝 symlink、junction、特殊文件；已存在文件先核实归属和哈希，不覆盖未知内容。应用 UID/GID 为 `1000:1000`（Dockerfile 与 Compose 一致）；确认目标主机 UID 映射，没有 rootless/userns remap 差异，否则暂停调整所有权方案。
 
-`secrets/` 目录本身为 UID/GID `1000:1000`、`0700`；`runtime/` 为部署操作员所有、`0700`。Nginx 的 ACME challenge 使用单独公开目录，不能因此扩大这两个秘密目录或数据目录的权限。
+`secrets/` 目录本身为 UID/GID `1000:1000`、`0700`；`runtime/` 为部署操作员所有、`0700`。应用根目录维持 `0700`，不为证书验证放宽权限。Nginx 的 ACME challenge 使用应用根目录之外的 `/var/www/notes.896364.xyz-acme`，不能因此扩大应用、秘密或数据目录的权限。
 
 - `auth/`、`attachments/`、`state/`：UID/GID `1000:1000`，目录 `0700`，数据普通文件 `0600`；**可写**绑定。SQLite 会话和 WAL 需要写权限，附件上传/删除和账号 state 也需要写权限，不应把这些数据目录设成只读。
 - `secrets/storage.key`：UID/GID `1000:1000`、`0600`、32 字节普通文件，只读绑定到 `/run/secrets/storage.key`。生产必须是源站原始密钥的同字节副本，核对摘要和长度，不显示内容，不生成替代密钥。fixture 另生成随机测试密钥，不接触原密钥。
@@ -146,9 +146,9 @@ fixture 在正式迁移前停止；保留受限清单及本地资产。明确列
 
 `notes.896364.xyz.conf` 中两个活动 server 仅服务这个域名；HTTP 除 ACME challenge 外、HTTPS 所有路径/方法均返回 503 维护页，无活动 `proxy_pass`。最终业务代理完整保留在注释区，**只有 Task 5 数据/R2/认证及用户验收门禁通过后**，才能替换 HTTPS 的那个 `location /`；不能把它追加成重复 location。代理固定本项目 loopback，传原 Host/协议，覆盖客户端伪造的 X-Forwarded-For；64 MiB 入口余量供 25 MiB 附件 JSON/base64 信封，应用自身限额不变。若 Cloudflare 开启代理，`$remote_addr` 默认可能是边缘节点，不能把这称为真实访客 IP；不为本任务修改其它站点的全局 real_ip 信任配置。
 
-首次没有证书时：保存既有 Nginx `-t` 成功和其它站点基线；确认两个目标 site 文件不存在，再只暂存模板**第一个 HTTP server 块**。ACME root `/home/ubuntu/apps/sanyulog/acme` 专用，不能共用 auth/附件目录，须保证 Nginx worker 可遍历/读取此唯一公开 challenge 目录（数据和秘密子目录仍 0700）。先 `sudo nginx -t` 成功才 reload。DNS 只新增 `notes.896364.xyz` 指向首尔，首次建议 DNS-only 以直接验证 origin，不触碰其它记录。
+首次没有证书时：保存既有 Nginx `-t` 成功和其它站点基线；确认两个目标 site 文件不存在，再只暂存模板**第一个 HTTP server 块**。ACME webroot 固定为站点专用 `/var/www/notes.896364.xyz-acme`，与 `0700` 应用根目录完全分离；不得用应用根目录中的 symlink 指向它，也不得放宽应用根目录权限。创建前确认该精确路径不存在、祖先无 symlink 且 Nginx worker 可遍历；若已存在则先验证归属，不复用其他站点目录。仅新建的站点 webroot、`.well-known/`、`acme-challenge/` 目录使用 root:root `0755`，公开 challenge 普通文件 `0644`；不能把 auth、附件、env、密钥或备份复制进这个公共目录。先 `sudo nginx -t` 成功才 reload。DNS 只新增 `notes.896364.xyz` 指向首尔，首次建议 DNS-only 以直接验证 origin，不触碰其它记录。
 
-使用 Certbot **certonly + webroot** 为唯一域名申请证书，禁止 `--nginx` 自动重写其它站点。证书成功存在、权限正常后，备份本次 HTTP-only site 为受限、可恢复的普通文件，再安装完整维护模板；再次 `nginx -t` 成功才 reload。证书失败保持 HTTP 维护，不装引用不存在证书的 HTTPS 块、不关闭 TLS 验证、不公开 18765。不添加 default_server 或 wildcard，也不改现有 enabled sites。
+使用 Certbot **certonly + webroot**（`--webroot-path /var/www/notes.896364.xyz-acme`）为唯一域名申请证书，禁止 `--nginx` 自动重写其它站点。申请前在该 webroot 的 `.well-known/acme-challenge/` 下创建本轮唯一、无秘密的探针普通文件；用正确 Host 经 HTTP 请求相同 challenge 路径，必须得到 200 和精确探针字节，缺失探针为 404，同时 `GET /` 和 `POST /api/state` 仍为 503。先验证此行为再申请证书；测试后只移除精确探针文件，不删除 webroot 或其他 challenge。证书成功存在、权限正常后，备份本次 HTTP-only site 为受限、可恢复的普通文件，再安装完整维护模板；再次 `nginx -t` 成功才 reload。证书失败保持 HTTP 维护，不装引用不存在证书的 HTTPS 块、不关闭 TLS 验证、不公开 18765。不添加 default_server 或 wildcard，也不改现有 enabled sites；核对其它站点 root/config 摘要保持原样。
 
 上线维护阶段需独立检查 origin `https://notes.896364.xyz`（用正确 SNI/Host 的 `--resolve ...:443:43.131.245.43`，不用 `-k`）、证书链/域名/期限，及经 DNS 的请求结果。`GET /`、`GET /api/health`、`POST /api/state` 必须仍是 503 维护响应，不是后端 200/401；保留 ACME challenge 可验证性。Docker 内/local `/api/health` 则单独应为 healthy/200。需要浏览器内部 fixture 联调时另走受控 SSH 本地隧道，不提前开放公网业务代理，也不关闭 Secure Cookie；具体夹具会话测试不得输出 Cookie。
 

@@ -177,7 +177,20 @@ Case 'active public entry returns maintenance and never proxies or serves applic
     $locations=@($all | Where-Object name -CEQ 'location')
     Assert-True ($locations.Count -eq 3) 'unreviewed public location'
     $acme=@($locations | Where-Object { ($_.args -join ' ') -ceq '^~ /.well-known/acme-challenge/' })
-    Assert-True ($acme.Count -eq 1 -and ((Named $acme[0].children 'root').args -join ' ') -ceq '/home/ubuntu/apps/sanyulog/acme') 'ACME root must be dedicated'
+    Assert-True ($acme.Count -eq 1) 'dedicated ACME challenge location missing'
+}
+Case 'ACME static challenge is outside restricted app roots without bypassing maintenance' {
+    $http=$servers[0].children
+    $acme=@(Named $http 'location' | Where-Object { ($_.args -join ' ') -ceq '^~ /.well-known/acme-challenge/' })
+    Assert-True ($acme.Count -eq 1) 'HTTP ACME prefix location missing'
+    $roots=@(Named $acme[0].children 'root')
+    Assert-True ($roots.Count -eq 1 -and ($roots[0].args -join ' ') -ceq '/var/www/notes.896364.xyz-acme') 'ACME must use site-only public webroot outside restricted application roots'
+    Assert-True (((Named $acme[0].children 'try_files').args -join ' ') -ceq '$uri =404') 'existing challenge must be served; missing challenge must be 404'
+    Assert-True (((Named $acme[0].children 'default_type').args -join ' ') -ceq 'text/plain') 'challenge response must be plain text'
+    Assert-True (@(All-Nodes $acme[0].children | Where-Object name -CIN @('return','proxy_pass','alias','rewrite','include','deny')).Count -eq 0) 'ACME challenge must not inherit maintenance or proxy behavior'
+    Assert-True (@($http | Where-Object name -CIN @('return','rewrite','if')).Count -eq 0) 'server-level maintenance must not preempt the ACME location'
+    $allRoots=@(All-Nodes $servers | Where-Object name -CEQ 'root')
+    Assert-True ($allRoots.Count -eq 1) 'only this site ACME directory may be publicly served'
 }
 Case 'TLS references only dedicated certificate files' {
     Assert-True (((Named $servers[1].children 'ssl_certificate').args -join ' ') -ceq '/etc/letsencrypt/live/notes.896364.xyz/fullchain.pem') 'wrong certificate'
