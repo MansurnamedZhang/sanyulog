@@ -1,0 +1,69 @@
+{
+  "name": "${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}",
+  "services": {
+    "app": {
+      "image": "${SANYU_IMAGE_ID:?Set verified local sha256 image ID}",
+      "pull_policy": "never",
+      "user": "1000:1000",
+      "read_only": true,
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "restart": "unless-stopped",
+      "stop_grace_period": "30s",
+      "ports": ["127.0.0.1:18765:8765"],
+      "networks": ["private"],
+      "depends_on": {"postgres": {"condition": "service_healthy"}},
+      "env_file": ["/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/runtime/app.env"],
+      "environment": {
+        "PROCESS_LOG_HOST": "0.0.0.0",
+        "PROCESS_LOG_PORT": "8765",
+        "PROCESS_LOG_DATA": "/state",
+        "PROCESS_LOG_AUTH_ENABLED": "1",
+        "PROCESS_LOG_AUTH_DB": "/auth/auth.db",
+        "PROCESS_LOG_ATTACHMENTS": "/attachments",
+        "PROCESS_LOG_ENCRYPTION_KEY_FILE": "/run/secrets/storage.key",
+        "PROCESS_LOG_COOKIE_SECURE": "1",
+        "PROCESS_LOG_ALLOWED_ORIGINS": "https://notes.896364.xyz,http://127.0.0.1:18765",
+        "PROCESS_LOG_TRUSTED_PROXIES": "${SANYU_PROXY_IP:?Set observed dedicated bridge gateway IP}",
+        "PROCESS_LOG_R2_ACCOUNT_ID": "0910a2f37a347c249c2dce42169b9b65",
+        "PROCESS_LOG_R2_BUCKET": "sanyulog-media",
+        "PROCESS_LOG_R2_CREDENTIALS_FILE": "/run/secrets/r2.json"
+      },
+      "volumes": [
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/auth", "target": "/auth", "read_only": false, "bind": {"create_host_path": false}},
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/attachments", "target": "/attachments", "read_only": false, "bind": {"create_host_path": false}},
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/state", "target": "/state", "read_only": false, "bind": {"create_host_path": false}},
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/secrets/storage.key", "target": "/run/secrets/storage.key", "read_only": true, "bind": {"create_host_path": false}},
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/secrets/r2.json", "target": "/run/secrets/r2.json", "read_only": true, "bind": {"create_host_path": false}}
+      ],
+      "tmpfs": ["/tmp:rw,noexec,nosuid,size=64m,mode=1777"],
+      "healthcheck": {
+        "test": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health',timeout=4)"],
+        "interval": "20s", "timeout": "5s", "start_period": "20s", "retries": 3
+      },
+      "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    },
+    "postgres": {
+      "image": "postgres:16-bookworm",
+      "restart": "unless-stopped",
+      "stop_grace_period": "60s",
+      "networks": ["private"],
+      "environment": {
+        "POSTGRES_USER": "sanyulog",
+        "POSTGRES_DB": "${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}",
+        "POSTGRES_PASSWORD_FILE": "/run/secrets/postgres-password"
+      },
+      "volumes": [
+        {"type": "volume", "source": "pgdata", "target": "/var/lib/postgresql/data"},
+        {"type": "bind", "source": "/home/ubuntu/apps/${SANYU_PROJECT:?Select sanyulog-fixture or sanyulog}/secrets/postgres-password", "target": "/run/secrets/postgres-password", "read_only": true, "bind": {"create_host_path": false}}
+      ],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""],
+        "interval": "10s", "timeout": "5s", "start_period": "20s", "retries": 5
+      },
+      "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    }
+  },
+  "networks": {"private": {"driver": "bridge"}},
+  "volumes": {"pgdata": {}}
+}
