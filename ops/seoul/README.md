@@ -184,6 +184,8 @@ pwsh -NoProfile -File ops/seoul/snapshot-source.ps1 -Mode snapshot `
   -DatabaseContainer dev-postgres -ExpectedDatabase process_log -ExpectedUser process_log
 ```
 
+快照失败码仅带白名单阶段后缀（如 `:source_paths`、`:database_dump`、`:manifest_write` 或 `:unknown`），不返回异常原文、环境变量、密码或私有路径。SSH 启动失败、超时或无远端回执统一表示源站状态未知；必须先独立核实源应用健康及是否留下部分备份，再决定任何重试。
+
 脚本重新确认应用停止、DB 容器运行、应用 `DATABASE_URL` 精确指向 `dev-postgres:5432/process_log` 且用户为 `process_log`；两容器必须共享已核实的 `dev-databases_default` NetworkID，数据库端别名含 `dev-postgres`。应用四个 bind mount 的来源、目标和读写性须逐项匹配；Compose labels 的 project/service/config_files/working_dir 必须分别为 `process-log`/`app`/上述 Compose 路径/项目根（这里的 `app` 是 **Compose 服务名**，不是数据库名），Compose 必须由 SSH 用户 UID 1000 所有且 mode `0600`。这些是此轮观察身份，漂移即中止并重新审查，不偷偷改为宽匹配。停止态容器的 `DATABASE_URL` 只能从 Docker `Config.Env` 受限投影在远端进程内解析；投影中可能含密码，不得输出、记录或转发原文。所有源路径和祖先须无符号链接，原始 `storage.key` 恰为 32 字节。以新建的 `0700` 源备份目录保存 PG18 `pg_dump -Fc`（由源 PG18 的 `pg_restore -l` 可列出）、SQLite 在线 backup API 合并后的完整 `auth.db`、整个附件树与 `state` 树、精确 Compose 和原密钥；普通文件以 `0600` 新建。源 `auth.db` 中所有账号（含停用）都参与附件引用查询，未初始化 schema 不会被创建；逐个确认 PostgreSQL 引用的密文文件存在于整树副本。清单记录每个复制文件的字节数/SHA-256、账号/会话聚合数和源容器停止态，不记录凭据或密钥正文。失败时保留部分备份供调查并尝试重启源应用；`snapshot_failed_source_may_be_down` 或 `snapshot_remote_unavailable_source_state_unknown` 必须视为源站可能仍停止，操作员立即独立核实容器健康，不能继续传输。脚本成功后源应用仍保持停止，直到迁移或人工回退决定。
 
 同机源备份是持久恢复点，不能在转运后删除。经现有 SSH/SCP 将**该一个精确备份目录**下载到当前 Windows 用户与 SYSTEM 独占的临时目录；创建前检查目标不存在、**全部祖先**不是 junction/reparse point，禁用 ACL 继承并只授予当前用户 SID 与 `S-1-5-18`（SYSTEM）完全控制。传输前后对临时根和所有文件/目录用 `Get-Acl` 核对 DACL：无继承给其他主体的有效 ACE，主体集合只含当前用户 SID 与 SYSTEM；只留脱敏主体/权限摘要作为证据。当前脚本不自动配置或验证 ACL，因此这项人工门禁不能省略。不得把备份放在 Git 工作树、公共下载目录、同步盘或聊天附件。SCP 返回码为 0 后，在受限控制端加载脚本并执行：

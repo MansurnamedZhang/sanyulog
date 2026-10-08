@@ -18,12 +18,16 @@ function Test-SanyuInteger($Value) { return (($Value -is [int] -or $Value -is [l
 
 function Get-SanyuFailureCode([System.Collections.IDictionary]$Reply) {
     if ($null -eq $Reply -or $Reply['ok'] -cne $false -or $Reply['sourceMayBeDown'] -isnot [bool]) { return 'snapshot_remote_unavailable_source_state_unknown' }
-    if ($Reply['sourceMayBeDown']) { return 'snapshot_failed_source_may_be_down' }
-    return 'snapshot_failed_source_state_verified_running'
+    $base=if ($Reply['sourceMayBeDown']) { 'snapshot_failed_source_may_be_down' } else { 'snapshot_failed_source_state_verified_running' }
+    if (-not $Reply.Contains('phase')) { return $base }
+    $allowed=@('source_state','source_identity','source_paths','backup_path','backup_create','database_dump','auth_copy','tree_copy','reference_check','manifest_write','unknown')
+    $phase=if ($Reply['phase'] -is [string] -and $Reply['phase'] -cin $allowed) { $Reply['phase'] } else { 'unknown' }
+    return "${base}:$phase"
 }
 
 function Get-SanyuTransportFailureCode([string]$Reason) {
     if ($Reason -cin @('snapshot_failed_source_may_be_down','snapshot_failed_source_state_verified_running')) { return $Reason }
+    if ($Reason -cmatch '^snapshot_failed_source_(may_be_down|state_verified_running):(source_state|source_identity|source_paths|backup_path|backup_create|database_dump|auth_copy|tree_copy|reference_check|manifest_write|unknown)$') { return $Reason }
     return 'snapshot_remote_unavailable_source_state_unknown'
 }
 
@@ -167,7 +171,7 @@ function Invoke-SanyuRemoteSnapshot {
         $DbContainer -cne 'dev-postgres') { throw 'snapshot_request_invalid' }
     $py=@'
 import hashlib, json, os, pathlib, re, sqlite3, stat, subprocess, sys, urllib.parse
-BACKUP='__BACKUP__'; COMPOSE='__COMPOSE__'; DB='__DB__'; USER='__USER__'; DB_CONTAINER='__DB_CONTAINER__'
+BACKUP='__BACKUP__'; COMPOSE=pathlib.Path('__COMPOSE__'); DB='__DB__'; USER='__USER__'; DB_CONTAINER='__DB_CONTAINER__'
 ROOT=pathlib.Path('/home/hans/services/process-log')
 AUTH=pathlib.Path('/home/hans/.local/share/process-log-auth/auth.db')
 ATTACH=ROOT/'attachments'; STATE=ROOT/'state'
@@ -271,12 +275,18 @@ def check_source_identity(database_url,mounts,labels,network_bound,compose_owner
     if not isinstance(labels,dict) or any(labels.get(k)!=v for k,v in {
         'com.docker.compose.project':'process-log',
         'com.docker.compose.service':'app',
-        'com.docker.compose.project.config_files':COMPOSE,
+        'com.docker.compose.project.config_files':str(COMPOSE),
         'com.docker.compose.project.working_dir':str(ROOT),
     }.items()): raise RuntimeError('compose_identity_mismatch')
+def snapshot_phase(value):
+    allowed=frozenset(('source_state','source_identity','source_paths','backup_path','backup_create',
+                       'database_dump','auth_copy','tree_copy','reference_check','manifest_write'))
+    return value if isinstance(value,str) and value in allowed else 'unknown'
+phase='source_state'
 try:
     if docker_state('process-log').get('Status')!='exited': raise RuntimeError('source_must_be_stopped')
     if docker_state(DB_CONTAINER).get('Status')!='running': raise RuntimeError('database_unavailable')
+    phase='source_identity'
     if run(['docker','inspect','--format','{{.Name}}','process-log']).decode().strip()!='/process-log': raise RuntimeError('app_name_mismatch')
     if run(['docker','inspect','--format','{{.Name}}',DB_CONTAINER]).decode().strip()!='/dev-postgres': raise RuntimeError('database_name_mismatch')
     appnets=json.loads(run(['docker','inspect','--format','{{json .NetworkSettings.Networks}}','process-log']))
@@ -288,18 +298,24 @@ try:
     # Keep the Config.Env projection in this process only; never serialize or log it.
     env=json.loads(run(['docker','inspect','--format','{{json .Config.Env}}','process-log']))
     values=dict(item.split('=',1) for item in env if '=' in item)
+    phase='source_paths'
     for item,kind in ((AUTH,False),(ATTACH,True),(STATE,True),(KEY,False),(COMPOSE,False)):
         safe(item,kind)
     info=COMPOSE.stat()
     compose_owner_ok=(info.st_uid==os.getuid()==1000 and stat.S_IMODE(info.st_mode)==0o600)
+    phase='source_identity'
     check_source_identity(values.get('DATABASE_URL',''),mounts,labels,shared,compose_owner_ok)
     del env,values
+    phase='source_paths'
     if KEY.stat().st_size!=32: raise RuntimeError('key_size_invalid')
+    phase='backup_path'
     backup=pathlib.Path(BACKUP); safe(backup.parent,True)
     if os.path.lexists(backup): raise RuntimeError('backup_exists')
+    phase='backup_create'
     os.umask(0o077); newdir(backup)
     members=[]
     for name in ('auth','attachments','state','config','secrets'): newdir(backup/name)
+    phase='database_dump'
     dump=backup/'db.dump'
     fd=os.open(dump,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600)
     proc=subprocess.Popen(['docker','exec',DB_CONTAINER,'pg_dump','-U',USER,'-d',DB,'-Fc'],stdout=fd,stderr=subprocess.PIPE)
@@ -314,6 +330,7 @@ try:
     if check.returncode: raise RuntimeError('dump_invalid')
     with dump.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
     members.append({'path':'db.dump','kind':'file','bytes':dump.stat().st_size,'sha256':digest})
+    phase='auth_copy'
     authdest=backup/'auth/auth.db'
     with sqlite3.connect(AUTH.as_uri()+'?mode=ro',uri=True) as src:
         with sqlite3.connect(authdest) as dst: src.backup(dst)
@@ -325,6 +342,7 @@ try:
     if not accounts or len(accounts)!=len(set(accounts)): raise RuntimeError('account_invalid')
     with authdest.open('rb') as stream: digest=hashlib.file_digest(stream,'sha256').hexdigest()
     members.append({'path':'auth/auth.db','kind':'file','bytes':authdest.stat().st_size,'sha256':digest})
+    phase='tree_copy'
     copy_tree(ATTACH,backup/'attachments-copy')
     (backup/'attachments-copy').rename(backup/'attachments-new')
     # Keep explicit destination roots; the copy staging tree is re-homed atomically.
@@ -335,6 +353,7 @@ try:
     for member in members: member['path']=member['path'].replace('state-copy/','state/')
     members.append(copy_file(COMPOSE,backup/'config'/pathlib.Path(COMPOSE).name))
     members.append(copy_file(KEY,backup/'secrets/storage.key'))
+    phase='reference_check'
     refs=set()
     for sid in accounts:
         if sid!='owner' and not re.fullmatch('[a-f0-9]{32}',sid): raise RuntimeError('storage_id_invalid')
@@ -352,6 +371,7 @@ try:
     copied={m['path'] for m in members}
     if not refs.issubset(copied): raise RuntimeError('attachment_missing')
     if docker_state('process-log').get('Status')!='exited': raise RuntimeError('source_resumed')
+    phase='manifest_write'
     roots=snapshot_roots(backup)
     directories={entry['path'] for entry in roots}
     if not {'auth','attachments','state','config','secrets'}.issubset(directories): raise RuntimeError('snapshot_root_missing')
@@ -372,7 +392,7 @@ except Exception:
         state=docker_state('process-log')
         healthy=state.get('Status')=='running' and state.get('Health',{}).get('Status')=='healthy'
     except Exception: pass
-    print(json.dumps({'ok':False,'error':'snapshot_failed','sourceMayBeDown':not healthy}))
+    print(json.dumps({'ok':False,'error':'snapshot_failed','phase':snapshot_phase(phase),'sourceMayBeDown':not healthy}))
     sys.exit(2)
 '@
     foreach ($pair in @(@('__BACKUP__',$Backup),@('__COMPOSE__',$Compose),@('__DB__',$Database),@('__USER__',$User),@('__DB_CONTAINER__',$DbContainer))) { $py=$py.Replace($pair[0],$pair[1]) }

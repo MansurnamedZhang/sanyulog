@@ -39,11 +39,15 @@ Assert-True $valid.ok 'valid complete stopped snapshot rejected'
 Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$true}) -ceq 'snapshot_failed_source_may_be_down') 'failed restart hidden from operator'
 Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$false}) -ceq 'snapshot_failed_source_state_verified_running') 'verified running status not distinguished'
 Assert-True ((Get-SanyuFailureCode @{}) -ceq 'snapshot_remote_unavailable_source_state_unknown') 'unknown state falsely treated as running'
+Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$true;phase='source_paths'}) -ceq 'snapshot_failed_source_may_be_down:source_paths') 'safe pre-backup phase lost'
+Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$true;phase='DATABASE_URL=secret-canary'}) -ceq 'snapshot_failed_source_may_be_down:unknown') 'untrusted phase leaked'
 foreach ($reason in @('source_ssh_failed','snapshot_timeout','connection reset','')) {
     Assert-True ((Get-SanyuTransportFailureCode $reason) -ceq 'snapshot_remote_unavailable_source_state_unknown') "transport failure $reason obscured source-state uncertainty"
 }
 Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_may_be_down') -ceq 'snapshot_failed_source_may_be_down') 'remote down warning lost'
 Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_state_verified_running') -ceq 'snapshot_failed_source_state_verified_running') 'remote health result lost'
+Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_may_be_down:source_paths') -ceq 'snapshot_failed_source_may_be_down:source_paths') 'safe phase lost across catch'
+Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_may_be_down:DATABASE_URL=secret-canary') -ceq 'snapshot_remote_unavailable_source_state_unknown') 'unsafe phase escaped transport catch'
 $withOrphan=Fixture; $withOrphan.referencedAttachmentCount=1
 Assert-True (Test-SanyuSnapshotManifest $withOrphan -ExpectedDatabase 'process_log' -ExpectedUser 'process_log').ok 'full copied tree may contain an unreferenced ciphertext file'
 Reject 'container writable' { param($f) $f.sourceStopped=$false }
@@ -113,6 +117,30 @@ try {
 $source=Get-Content -LiteralPath $sut -Raw
 $block=[regex]::Match($source,'(?s)\$py=@''\r?\n(.*?)\r?\n''@')
 Assert-True $block.Success 'remote Python block missing'
+$composeHarness=@'
+import ast,pathlib,sys
+tree=ast.parse(sys.stdin.read())
+assign=next(n for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='COMPOSE' for t in n.targets))
+ns={'pathlib':pathlib}
+exec(compile(ast.Module(body=[assign],type_ignores=[]),'<remote-compose>','exec'),ns)
+assert isinstance(ns['COMPOSE'],pathlib.Path), 'Compose path is a string; .stat will fail before backup creation'
+print('PASS remote Compose path supports stat')
+'@
+$composeResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $composeHarness
+Assert-True ($LASTEXITCODE -eq 0 -and $composeResult -eq 'PASS remote Compose path supports stat') 'remote Compose type regression'
+$phaseHarness=@'
+import ast,sys
+tree=ast.parse(sys.stdin.read())
+fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='snapshot_phase')
+ns={}
+exec(compile(ast.Module(body=[fn],type_ignores=[]),'<phase>','exec'),ns)
+assert ns['snapshot_phase']('source_paths')=='source_paths'
+assert ns['snapshot_phase']('DATABASE_URL=secret-canary')=='unknown'
+assert ns['snapshot_phase'](None)=='unknown'
+print('PASS remote failure phase is allowlisted')
+'@
+$phaseResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $phaseHarness
+Assert-True ($LASTEXITCODE -eq 0 -and $phaseResult -eq 'PASS remote failure phase is allowlisted') 'remote failure phase leaked'
 $harness=@'
 import ast,json,pathlib,sys,types
 source=sys.stdin.read(); tree=ast.parse(source)
