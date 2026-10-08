@@ -13,6 +13,11 @@ $ErrorActionPreference = 'Stop'
 
 function Test-TrueBoolean($Value) { return $Value -is [bool] -and $Value }
 function Test-FalseBoolean($Value) { return $Value -is [bool] -and -not $Value }
+function Test-NonNegativeInteger($Value) {
+    return ($Value -is [sbyte] -or $Value -is [byte] -or $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or $Value -is [int64] -or $Value -is [uint64]) -and
+        $Value -ge 0 -and $Value -le [long]::MaxValue
+}
 
 function Test-FreshObservation($Value, [datetimeoffset]$Now) {
     try { $age = ($Now - [datetimeoffset]::Parse([string]$Value)).TotalSeconds; return $age -ge 0 -and $age -le 900 }
@@ -49,6 +54,26 @@ function Test-SeoulPreflight {
     }
     if (-not (Test-TrueBoolean $source['complete']) -or $source['host'] -cne '172.16.240.13') { $blocked.Add('source_incomplete') }
     if (-not (Test-TrueBoolean $source['health']) -or -not (Test-TrueBoolean $source['containerHealthy'])) { $blocked.Add('source_health') }
+    if (-not (Test-TrueBoolean $source['dockerOk']) -or -not (Test-TrueBoolean $source['dockerPortInventoryComplete']) -or
+        -not (Test-TrueBoolean $source['nginxChecked']) -or $source['nginxOk'] -isnot [bool] -or
+        $source['nginxStatus'] -cnotin @('installed','not-installed') -or
+        [string]$source['imageId'] -cnotmatch '^sha256:[a-f0-9]{64}$' -or
+        -not (Test-NonNegativeInteger $source['diskAvailableBytes']) -or -not (Test-NonNegativeInteger $source['memoryAvailableBytes'])) { $blocked.Add('source_baseline') }
+    foreach ($kind in @('containers','ports','dockerTcpHostPorts','sites','volumes','networks')) {
+        if ($source[$kind] -isnot [array]) { $blocked.Add('source_baseline'); continue }
+        foreach ($value in $source[$kind]) {
+            $valid = switch ($kind) {
+                { $_ -in @('ports','dockerTcpHostPorts') } { $value -is [ValueType] -and $value -isnot [bool] -and [string]$value -match '^\d+$' -and $value -ge 1 -and $value -le 65535 }
+                'containers' { $value -is [string] -and $value -cmatch '^[a-zA-Z0-9_.-]+\|(running|exited|created|restarting|paused|dead|removing)\|(healthy|unhealthy|starting|none)$' }
+                'sites' { $value -is [string] -and $value -cmatch '^[a-zA-Z0-9_.*-]+$' }
+                default { $value -is [string] -and $value -cmatch '^[a-zA-Z0-9_.-]+$' }
+            }
+            if (-not $valid) { $blocked.Add('source_baseline') }
+        }
+    }
+    if (@($source['containers']) -cnotcontains 'process-log|running|healthy' -or
+        ($source['nginxStatus'] -ceq 'installed' -and -not (Test-TrueBoolean $source['nginxOk'])) -or
+        ($source['nginxStatus'] -ceq 'not-installed' -and (-not (Test-FalseBoolean $source['nginxOk']) -or @($source['sites']).Count -ne 0))) { $blocked.Add('source_baseline') }
     if (-not (Test-TrueBoolean $source['backupReadable']) -or $source['backupFileCount'] -isnot [ValueType] -or
         $source['backupFileCount'] -le 0 -or [string]$source['backupManifestSha256'] -cnotmatch '^[a-f0-9]{64}$') { $blocked.Add('source_backup') }
     $counts = @{}; $countsValid = $source['counts'] -is [System.Collections.IDictionary]
@@ -61,10 +86,14 @@ function Test-SeoulPreflight {
     if (-not (Test-TrueBoolean $target['complete']) -or $target['host'] -cne '43.131.245.43') { $blocked.Add('target_incomplete') }
     if (-not (Test-TrueBoolean $target['nginxOk']) -or -not (Test-TrueBoolean $target['dockerOk'])) { $blocked.Add('target_services') }
     # Conservative staging floors, not a capacity/performance certification.
-    if ($target['diskAvailableBytes'] -isnot [ValueType] -or $target['diskAvailableBytes'] -lt 10GB -or
-        $target['memoryAvailableBytes'] -isnot [ValueType] -or $target['memoryAvailableBytes'] -lt 1GB) { $blocked.Add('target_resources') }
+    if (-not (Test-NonNegativeInteger $target['diskAvailableBytes']) -or $target['diskAvailableBytes'] -lt 10GB -or
+        -not (Test-NonNegativeInteger $target['memoryAvailableBytes']) -or $target['memoryAvailableBytes'] -lt 1GB) { $blocked.Add('target_resources') }
     if (-not $target.Contains('ports') -or @($target['ports']) -contains 18765) { $blocked.Add('target_port') }
     foreach ($port in @($target['ports'])) { if ($port -isnot [ValueType] -or $port -is [bool] -or [string]$port -notmatch '^\d+$' -or $port -lt 1 -or $port -gt 65535) { $blocked.Add('target_port') } }
+    if (-not (Test-TrueBoolean $target['dockerPortInventoryComplete']) -or $target['dockerTcpHostPorts'] -isnot [array]) { $blocked.Add('target_port') }
+    foreach ($port in @($target['dockerTcpHostPorts'])) {
+        if ($port -isnot [ValueType] -or $port -is [bool] -or [string]$port -notmatch '^\d+$' -or $port -lt 1 -or $port -gt 65535 -or $port -eq 18765) { $blocked.Add('target_port') }
+    }
     if (-not $target.Contains('sites') -or @($target['sites'] | Where-Object { $n=([string]$_).TrimEnd('.').ToLowerInvariant(); $n -eq 'notes.896364.xyz' -or ($n.Contains('*') -and 'notes.896364.xyz' -like $n) -or $n -eq '.896364.xyz' }).Count) { $blocked.Add('target_site') }
     foreach ($site in @($target['sites'])) { if ($site -isnot [string] -or $site -cnotmatch '^[a-zA-Z0-9_.*-]+$') { $blocked.Add('target_site') } }
     if (-not $target.Contains('containers') -or @($target['containers'] | Where-Object { $_ -match '^sanyulog([_|.-]|$)' }).Count) { $blocked.Add('target_container') }
@@ -100,14 +129,18 @@ function Test-SeoulPreflight {
     foreach ($pair in @(@('source',$source),@('target',$target))) {
         $h=$pair[1]; $safe=@{}
         foreach ($key in @('diskAvailableBytes','memoryAvailableBytes','backupFileCount')) {
-            if ($h[$key] -is [ValueType] -and [string]$h[$key] -match '^\d+$') { $safe[$key]=[long]$h[$key] }
+            if (Test-NonNegativeInteger $h[$key]) { $safe[$key]=[long]$h[$key] }
         }
-        foreach ($key in @('complete','health','containerHealthy','backupReadable','nginxOk','dockerOk')) { $safe[$key]=Test-TrueBoolean $h[$key] }
+        foreach ($key in @('complete','health','containerHealthy','backupReadable','nginxOk','dockerOk','dockerPortInventoryComplete','nginxChecked')) { $safe[$key]=Test-TrueBoolean $h[$key] }
+        $safe.nginxStatus=if ($h['nginxStatus'] -cin @('installed','not-installed')) { $h['nginxStatus'] } else { 'unknown' }
         $safe.host = if ($pair[0] -eq 'source') { '172.16.240.13' } else { '43.131.245.43' }
         $safe.containers=@($h['containers'] | Where-Object { $_ -is [string] -and $_ -cmatch '^[a-zA-Z0-9_.-]+\|(running|exited|created|restarting|paused|dead|removing)\|(healthy|unhealthy|starting|none)$' })
         $safe.ports=@($h['ports'] | Where-Object { $_ -is [ValueType] -and $_ -ge 1 -and $_ -le 65535 })
+        $safe.dockerTcpHostPorts=@($h['dockerTcpHostPorts'] | Where-Object { $_ -is [ValueType] -and $_ -ge 1 -and $_ -le 65535 })
         $safe.sites=@($h['sites'] | Where-Object { $_ -is [string] -and $_ -cmatch '^[a-zA-Z0-9_.*-]+$' })
         foreach ($kind in @('volumes','networks')) { $safe[$kind]=@($h[$kind] | Where-Object { $_ -is [string] -and $_ -cmatch '^[a-zA-Z0-9_.-]+$' }) }
+        foreach ($kind in @('containers','ports','dockerTcpHostPorts','sites','volumes','networks')) { if ($h[$kind] -isnot [array]) { $safe[$kind]=$null } }
+        if ($pair[0] -eq 'source' -and @($blocked | Where-Object { $_ -like 'source_*' }).Count) { $safe.complete=$false }
         if ([string]$h['imageId'] -cmatch '^sha256:[a-f0-9]{64}$') { $safe.imageId=$h['imageId'] }
         if ([string]$h['backupManifestSha256'] -cmatch '^[a-f0-9]{64}$') { $safe.backupManifestSha256=$h['backupManifestSha256'] }
         $safeHosts[$pair[0]]=$safe
@@ -165,7 +198,7 @@ function Get-SeoulHostObservation {
     if ($IdentityFile) { if (-not (Test-Path -LiteralPath $IdentityFile -PathType Leaf)) { throw 'identity_path_missing' }; $arguments+=@('-i',$IdentityFile) }
     $arguments+=@($destination,'python3 -B -')
     $script=@'
-import hashlib, json, os, pathlib, re, stat, subprocess, sys
+import hashlib, json, os, pathlib, re, shutil, stat, subprocess, sys
 ROLE = '__ROLE__'
 BACKUP = '__BACKUP__'
 def run(args, data=None):
@@ -178,9 +211,43 @@ def unsafe(path):
         if os.path.lexists(item) and stat.S_ISLNK(item.lstat().st_mode): return True
         if item != p and item.exists() and not item.is_dir(): return True
     return False
+def nginx_sites(executable):
+    run(['sudo','-n',executable,'-t'])
+    config=run(['sudo','-n',executable,'-T'])
+    sites=[]
+    for names in re.findall(r'\bserver_name\s+([^;]+);',config):
+        for name in names.split():
+            if not re.fullmatch(r'[a-zA-Z0-9_.*-]+',name): raise RuntimeError('unsupported_nginx_server_name')
+            sites.append(name)
+    return sites
 try:
     out={'complete': True, 'host': '172.16.240.13' if ROLE=='source' else '43.131.245.43'}
-    rows=[json.loads(s) for s in run(['docker','ps','-a','--format','{{json .}}']).splitlines() if s]
+    rows=[json.loads(s) for s in run(['docker','ps','-a','--no-trunc','--format','{{json .}}']).splitlines() if s]
+    ids=[row['ID'] for row in rows]
+    if len(ids)>4096 or len(ids)!=len(set(ids)) or any(not re.fullmatch('[a-f0-9]{64}',i) for i in ids): raise RuntimeError('container_inventory_invalid')
+    tcp_ports=set()
+    projection='{"id":{{json .Id}},"configured":{{json .HostConfig.PortBindings}},"active":{{json .NetworkSettings.Ports}}}'
+    for start in range(0,len(ids),100):
+        batch=ids[start:start+100]
+        mapped=[json.loads(line) for line in run(['docker','inspect','--format',projection,*batch]).splitlines() if line]
+        if len(mapped)!=len(batch) or {m['id'] for m in mapped}!=set(batch): raise RuntimeError('port_inventory_incomplete')
+        for item in mapped:
+            for kind in ('configured','active'):
+                mapping=item[kind]
+                if mapping is None: continue
+                if not isinstance(mapping,dict): raise RuntimeError('port_inventory_invalid')
+                for key,bindings in mapping.items():
+                    if not re.fullmatch(r'[0-9]+/(tcp|udp|sctp)',key): raise RuntimeError('port_inventory_invalid')
+                    if bindings is None: continue
+                    if not isinstance(bindings,list): raise RuntimeError('port_inventory_invalid')
+                    for binding in bindings:
+                        port=binding['HostPort']
+                        if not isinstance(port,str) or not re.fullmatch('[0-9]{1,5}',port) or not 1<=int(port)<=65535: raise RuntimeError('port_inventory_invalid')
+                        if key.endswith('/tcp'): tcp_ports.add(int(port))
+    after=run(['docker','ps','-a','--no-trunc','--format','{{.ID}}']).splitlines()
+    if len(after)!=len(ids) or set(after)!=set(ids): raise RuntimeError('container_inventory_changed')
+    out['dockerTcpHostPorts']=sorted(tcp_ports)
+    out['dockerPortInventoryComplete']=True
     out['containers']=[]
     for row in rows:
         if ROLE=='source' and row['State']!='running': continue
@@ -188,21 +255,17 @@ try:
         health=match.group(1) if match else 'none'
         out['containers'].append(row['Names']+'|'+row['State']+'|'+health)
     out['dockerOk']=True
+    out['volumes']=run(['docker','volume','ls','--format','{{.Name}}']).splitlines()
+    out['networks']=run(['docker','network','ls','--format','{{.Name}}']).splitlines()
     out['ports']=sorted({int(line.split()[3].rsplit(':',1)[1]) for line in run(['ss','-H','-ltn']).splitlines()})
     mem=run(['free','-b']).splitlines()
     out['memoryAvailableBytes']=int(next(s for s in mem if s.startswith('Mem:')).split()[-1])
     out['diskAvailableBytes']=int(run(['df','-Pk','/home']).splitlines()[-1].split()[3])*1024
-    out['sites']=[]
     if ROLE=='target':
-        out['volumes']=run(['docker','volume','ls','--format','{{.Name}}']).splitlines()
-        out['networks']=run(['docker','network','ls','--format','{{.Name}}']).splitlines()
-        run(['sudo','-n','nginx','-t'])
-        config=run(['sudo','-n','nginx','-T'])
-        for names in re.findall(r'\bserver_name\s+([^;]+);',config):
-            for name in names.split():
-                if not re.fullmatch(r'[a-zA-Z0-9_.*-]+',name): raise RuntimeError('unsupported_nginx_server_name')
-                out['sites'].append(name)
+        out['sites']=nginx_sites('nginx')
         out['nginxOk']=True
+        out['nginxChecked']=True
+        out['nginxStatus']='installed'
         paths=['/home/ubuntu/apps/sanyulog','/home/ubuntu/backups/sanyulog','/etc/nginx/sites-available/notes.896364.xyz.conf','/etc/nginx/sites-enabled/notes.896364.xyz.conf']
         out['paths']=[{'path':p,'exists':os.path.lexists(p),'unsafeAncestor':unsafe(p)} for p in paths]
         capacities=[]
@@ -212,6 +275,18 @@ try:
             capacities.append(int(run(['df','-Pk',str(parent)]).splitlines()[-1].split()[3])*1024)
         out['diskAvailableBytes']=min(capacities)
     else:
+        packages=run(['dpkg-query','-W','-f=${binary:Package}\t${db:Status-Status}\n']).splitlines()
+        installed=False
+        for package in packages:
+            name,status=package.split('\t')
+            if name.split(':')[0] in ('nginx','nginx-common','nginx-core','nginx-full','nginx-light','nginx-extras') and status=='installed': installed=True
+        executable=shutil.which('nginx')
+        if not executable and pathlib.Path('/usr/sbin/nginx').is_file(): executable='/usr/sbin/nginx'
+        if installed and not executable: raise RuntimeError('nginx_installation_unknown')
+        out['nginxChecked']=True
+        out['nginxStatus']='installed' if executable else 'not-installed'
+        out['sites']=nginx_sites(executable) if executable else []
+        out['nginxOk']=bool(executable)
         info=json.loads(run(['docker','inspect','--format','{{json .State}}','process-log']))
         out['containerHealthy']=info['Status']=='running' and info.get('Health',{}).get('Status')=='healthy'
         out['imageId']=run(['docker','inspect','--format','{{.Image}}','process-log']).strip()

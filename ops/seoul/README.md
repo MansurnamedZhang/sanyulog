@@ -58,9 +58,10 @@ PowerShell **不直接查询 Cloudflare API**，不接受 Cloudflare 凭据。�
 ## 门禁和观测边界
 
 - 发布：`git rev-parse <完整 SHA>^{commit}`，`gh run view <明确 run ID>` 的仓库 URL、push 事件、`headSha`、Checks 名、completed/success、非空成功 jobs；另须成功的镜像 build/import/record 三个 CI 步骤。`r2_reconcile.py` 基于指定提交的原始 Git 文本字节（保留末尾换行）作 SHA-256，而非当前工作树文件。CI 构建/导入成功不是发布镜像摘要、部署或实际 R2 成功；Task 2 仍须制作并核对该 SHA 的可追溯镜像。
-- 源站：Docker 运行服务名/状态，精确 `process-log` 健康和 image ID；loopback `/api/health`；资源/监听 TCP 端口。仅对既有受限备份目录读取普通文件并作不解析内容的摘要，拒绝符号链接和特殊文件；不会验证恢复、生成新备份或把备份上传云端。默认备份名来自批准设计，可用 `SourceBackupPath` 指定同一 backup 根下的一个明确子目录。
+- 源站：实际查询 Docker 运行服务名/状态、全部卷/网络名、精确 `process-log` 健康和 image ID、loopback `/api/health`、资源与监听/容器发布 TCP 端口。源 Nginx 通过成功的 `dpkg-query` 包状态查询及 PATH/`/usr/sbin/nginx` 检查确认：存在则实际 `nginx -t/-T` 采集站点；确认不存在则记录 `nginxChecked=true`、`nginxStatus=not-installed`、`nginxOk=false`、空站点列表。查询失败、缺字段或未知状态不允许用空列表冒充已检查；manifest 对缺失列表保存 null 并标为不完整。仅对既有受限备份目录读取普通文件并作不解析内容的摘要，拒绝符号链接、特殊文件及不可读子目录；不会验证恢复、生成新备份或把备份上传云端。默认备份名来自批准设计，可用 `SourceBackupPath` 指定同一 backup 根下的一个明确子目录。
 - 源计数：现有容器内部使用现有数据库连接环境，仅用于 PostgreSQL READ ONLY / REPEATABLE READ 聚合 SELECT；连接信息不进入 shell argv、输出或异常。SQLite auth 库 `mode=ro` + query_only，读取账号启停标记与 storage ID 仅为内部 schema 映射，外传只有账号、启用账号、会话、已初始化 schema、项目、笔记本、附件数量。无 Auth/Store 构造器、建库、建 schema、密钥读取或 R2 操作。未初始化停用账号仍计入账号数；跨 SQLite/PostgreSQL 的活跃计数不是切换一致性快照。
-- 目标：Nginx `-t` 和配置中 server_name 的只读解析；Docker 名称/状态、卷和网络名；TCP 18765；项目根 `/home/ubuntu/apps/sanyulog`、备份根 `/home/ubuntu/backups/sanyulog`、两个 Nginx 站点路径均必须不存在且祖先无 symlink。`sanyulog` 前缀容器/卷/网络拒绝。目标路径所在文件系统至少 10 GiB 可用、MemAvailable 至少 1 GiB；这是保守启动底线，不是压测/容量保证，正式恢复另核对备份体积与增长空间。
+- 目标：Nginx `-t` 和配置中 server_name 的只读解析；Docker 名称/状态、卷和网络名；TCP 18765；项目根 `/home/ubuntu/apps/sanyulog`、备份根 `/home/ubuntu/backups/sanyulog`、两个 Nginx 站点路径均必须不存在且祖先无 symlink。`sanyulog` 前缀容器/卷/网络拒绝。目标路径所在文件系统至少 10 GiB 可用、MemAvailable 至少 1 GiB；两台主机的容量必须为 0 至 Int64.MaxValue 的整数类型，拒绝字符串、Boolean、浮点数（即使数学上为整数）、NaN 和 Infinity。这是保守启动底线，不是压测/容量保证，正式恢复另核对备份体积与增长空间。
+- Docker NAT：两台主机都按完整 container ID 只读批量 inspect，仅投影 `Id`、`HostConfig.PortBindings`、`NetworkSettings.Ports`，不读完整 inspect 或 Env。每批最多 100 个、总数最多 4096；前后重查 ID 集合，缺/重复/新增/消失或任一 inspect 失败均拒绝。`dockerTcpHostPorts` 包含已停止容器的配置绑定；目标其中任一 TCP HostPort=18765 即拒绝，独立于 `ss` 和 docker ps 的展示字符串。无法解释的端口映射也拒绝，不静默漏报。
 - 未取得完整只读观测时失败关闭。manifest 中占用列表仅包含格式合法的名称/端口；被拒绝的任意字符串不转抄。所有完整 host/Cloudflare 观察须在预检 15 分钟窗口内完成。源容器当前镜像不会误当成待发布镜像。
 
 预检通过后仍必须完成 HTTPS/维护入口、私有桶访问校验、用户确认的维护窗口、一致备份/恢复、全部账号与附件哈希核对、人工重新登录及回滚封存。不得为了测试写生产用户数据；不得停源站、删除旧容器/卷/备份，或改动其他项目。
