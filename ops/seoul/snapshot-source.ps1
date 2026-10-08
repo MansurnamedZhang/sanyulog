@@ -54,6 +54,14 @@ function Test-SanyuSnapshotManifest {
             $entry['path'] -match '(^|/)\.\.?(?:/|$)' -or -not $roots.Add([string]$entry['path'])) { $errors.Add('root_invalid') }
     }
     foreach ($required in @('auth','attachments','state','config','secrets')) { if (-not $roots.Contains($required)) { $errors.Add('root_missing') } }
+    foreach ($relative in $roots) {
+        $separator=$relative.LastIndexOf('/')
+        if ($separator -ge 0 -and -not $roots.Contains($relative.Substring(0,$separator))) { $errors.Add('root_parent_missing') }
+    }
+    foreach ($relative in $paths) {
+        $separator=$relative.LastIndexOf('/')
+        if ($separator -ge 0 -and -not $roots.Contains($relative.Substring(0,$separator))) { $errors.Add('member_parent_missing') }
+    }
     foreach ($required in @('db.dump','auth/auth.db','secrets/storage.key')) { if (-not $paths.Contains($required)) { $errors.Add('member_missing') } }
     $key=@($Manifest['members'] | Where-Object { $_['path'] -ceq 'secrets/storage.key' })
     if ($key.Count -ne 1 -or $key[0]['bytes'] -ne 32) { $errors.Add('key_size') }
@@ -67,10 +75,14 @@ function Test-SanyuSnapshotManifest {
 
 function Test-SanyuTransferIdentity {
     param([System.Collections.IDictionary]$Source,[System.Collections.IDictionary]$Target)
-    if ($null -eq $Source -or $null -eq $Target -or $Source['members'] -isnot [array] -or $Target['members'] -isnot [array]) { return $false }
+    if ($null -eq $Source -or $null -eq $Target -or $Source['members'] -isnot [array] -or $Target['members'] -isnot [array] -or
+        $Source['roots'] -isnot [array] -or $Target['roots'] -isnot [array]) { return $false }
     $left=@($Source['members'] | Sort-Object path | ForEach-Object { "$($_['path'])|$($_['bytes'])|$($_['sha256'])" })
     $right=@($Target['members'] | Sort-Object path | ForEach-Object { "$($_['path'])|$($_['bytes'])|$($_['sha256'])" })
-    return ($left.Count -eq $right.Count -and [string]::Join("`n",$left) -ceq [string]::Join("`n",$right))
+    $leftDirs=@($Source['roots'] | Sort-Object path | ForEach-Object { "$($_['path'])|$($_['kind'])" })
+    $rightDirs=@($Target['roots'] | Sort-Object path | ForEach-Object { "$($_['path'])|$($_['kind'])" })
+    return ($left.Count -eq $right.Count -and [string]::Join("`n",$left) -ceq [string]::Join("`n",$right) -and
+        $leftDirs.Count -eq $rightDirs.Count -and [string]::Join("`n",$leftDirs) -ceq [string]::Join("`n",$rightDirs))
 }
 
 function Test-SanyuPathAncestors {
@@ -98,14 +110,26 @@ function Test-SanyuCopiedFiles {
                 $member['path'] -cnotmatch '^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$' -or
                 $member['path'] -match '(^|/)\.\.?(?:/|$)' -or -not $expected.TryAdd($member['path'],$member)) { return $false }
         }
+        if ($Manifest['roots'] -isnot [array]) { return $false }
+        $expectedDirs=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($entry in $Manifest['roots']) {
+            if ($entry -isnot [System.Collections.IDictionary] -or $entry['kind'] -cne 'directory' -or
+                $entry['path'] -isnot [string] -or $entry['path'] -cnotmatch '^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$' -or
+                $entry['path'] -match '(^|/)\.\.?(?:/|$)' -or -not $expectedDirs.Add($entry['path'])) { return $false }
+        }
         $stack=[Collections.Generic.Stack[IO.DirectoryInfo]]::new();$stack.Push($root)
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $seenDirs=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $manifestSeen=$false
         while ($stack.Count) {
             $dir=$stack.Pop()
             foreach ($item in $dir.GetFileSystemInfos()) {
                 if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
-                if ($item -is [IO.DirectoryInfo]) { $stack.Push($item);continue }
+                if ($item -is [IO.DirectoryInfo]) {
+                    $relative=[IO.Path]::GetRelativePath($root.FullName,$item.FullName).Replace('\','/')
+                    if (-not $expectedDirs.Contains($relative) -or -not $seenDirs.Add($relative)) { return $false }
+                    $stack.Push($item);continue
+                }
                 if ($item -isnot [IO.FileInfo]) { return $false }
                 $relative=[IO.Path]::GetRelativePath($root.FullName,$item.FullName).Replace('\','/')
                 if ($relative -ceq 'manifest.json') {
@@ -119,7 +143,7 @@ function Test-SanyuCopiedFiles {
                     (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry['sha256']) { return $false }
             }
         }
-        return ($manifestSeen -and $seen.Count -eq $expected.Count)
+        return ($manifestSeen -and $seen.Count -eq $expected.Count -and $seenDirs.Count -eq $expectedDirs.Count)
     } catch { return $false }
 }
 
@@ -196,6 +220,21 @@ def copy_tree(source,dest):
             src=current/name; safe(src,True)
             newdir(dest/rel/name)
         for name in sorted(files): members.append(copy_file(current/name,dest/rel/name))
+def snapshot_roots(base):
+    safe(base,True)
+    roots=[]
+    def unreadable(error): raise RuntimeError('snapshot_directory_unreadable')
+    for current,dirs,files in os.walk(base,followlinks=False,onerror=unreadable):
+        parent=pathlib.Path(current)
+        safe(parent,True)
+        for name in dirs:
+            child=parent/name
+            safe(child,True)
+            relative=child.relative_to(base).as_posix()
+            if not re.fullmatch('[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*',relative) or '..' in relative.split('/'):
+                raise RuntimeError('snapshot_directory_name_invalid')
+            roots.append({'path':relative,'kind':'directory'})
+    return sorted(roots,key=lambda entry:entry['path'])
 def docker_state(name):
     return json.loads(run(['docker','inspect','--format','{{json .State}}',name]))
 def check_network_binding(appnets,dbnets):
@@ -313,7 +352,12 @@ try:
     copied={m['path'] for m in members}
     if not refs.issubset(copied): raise RuntimeError('attachment_missing')
     if docker_state('process-log').get('Status')!='exited': raise RuntimeError('source_resumed')
-    roots=[{'path':name,'kind':'directory'} for name in ('auth','attachments','state','config','secrets')]
+    roots=snapshot_roots(backup)
+    directories={entry['path'] for entry in roots}
+    if not {'auth','attachments','state','config','secrets'}.issubset(directories): raise RuntimeError('snapshot_root_missing')
+    for member in members:
+        relative=member['path']
+        if '/' in relative and relative.rsplit('/',1)[0] not in directories: raise RuntimeError('snapshot_file_parent_missing')
     manifest={'schemaVersion':1,'complete':True,'sourceStopped':True,'databaseName':DB,'databaseUser':USER,'dumpDatabase':DB,'dumpFormat':'custom','keyBytes':32,
               'fileCount':len(members),'attachmentCount':sum(m['path'].startswith('attachments/') for m in members),
               'referencedAttachmentCount':len(refs),'authAccountCount':len(accounts),'authSessionCount':sessions,'roots':roots,'members':sorted(members,key=lambda m:m['path'])}

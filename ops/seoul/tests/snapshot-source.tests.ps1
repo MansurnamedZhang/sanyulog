@@ -20,7 +20,11 @@ function Fixture {
         roots = @(
             @{path='auth'; kind='directory'}, @{path='attachments'; kind='directory'},
             @{path='state'; kind='directory'}, @{path='config'; kind='directory'},
-            @{path='secrets'; kind='directory'}
+            @{path='secrets'; kind='directory'},
+            @{path='attachments/owner'; kind='directory'},
+            @{path='attachments/accounts'; kind='directory'},
+            @{path='attachments/accounts/abc'; kind='directory'},
+            @{path='state/empty'; kind='directory'}
         )
     }
 }
@@ -61,6 +65,9 @@ Reject 'path traversal' { param($f) $f.members[2].path='../escape' }
 Reject 'invalid hash' { param($f) $f.members[2].sha256=('g'*64) }
 Reject 'missing state root' { param($f) $f.roots=@($f.roots | Where-Object path -ne 'state') }
 Reject 'missing config root' { param($f) $f.roots=@($f.roots | Where-Object path -ne 'config') }
+Reject 'missing attachment file parent' { param($f) $f.roots=@($f.roots | Where-Object path -ne 'attachments/owner') }
+Reject 'missing nested directory parent' { param($f) $f.roots=@($f.roots | Where-Object path -ne 'attachments/accounts') }
+Reject 'nested root traversal' { param($f) $f.roots[8].path='state/../escape' }
 Reject 'incomplete copy' { param($f) $f.complete=$false }
 Reject 'count mismatch' { param($f) $f.fileCount=4 }
 
@@ -70,6 +77,8 @@ $right.members[2].sha256=('f'*64)
 Assert-True (-not (Test-SanyuTransferIdentity $left $right)) 'different hash escaped transfer gate'
 $right=Fixture; $right.members[2].bytes=7
 Assert-True (-not (Test-SanyuTransferIdentity $left $right)) 'different length escaped transfer gate'
+$right=Fixture; $right.roots=@($right.roots | Where-Object path -ne 'state/empty')
+Assert-True (-not (Test-SanyuTransferIdentity $left $right)) 'missing empty directory escaped transfer identity gate'
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('sanyu-snapshot-test-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temporary) | Out-Null
 try {
@@ -79,12 +88,17 @@ try {
     Assert-True ($LASTEXITCODE -eq 0 -and $verifyOutput.manifestOnly -eq $true -and $verifyOutput.bytesVerified -eq $false -and -not $verifyOutput.ContainsKey('ok')) 'manifest-only CLI falsely claims byte integrity'
     [IO.File]::WriteAllText((Join-Path $temporary 'manifest.json'),'{}',[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $temporary 'db.dump'),'abc',[Text.UTF8Encoding]::new($false))
+    [IO.Directory]::CreateDirectory((Join-Path $temporary 'state/empty')) | Out-Null
     $manifestHash=(Get-FileHash -LiteralPath (Join-Path $temporary 'manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
-    $copy=@{members=@(@{path='db.dump';kind='file';bytes=3;sha256='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'})}
+    $copy=@{members=@(@{path='db.dump';kind='file';bytes=3;sha256='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'});roots=@(
+        @{path='state';kind='directory'},@{path='state/empty';kind='directory'})}
     Assert-True (Test-SanyuCopiedFiles $temporary $copy $manifestHash) 'identical local staging bytes rejected'
     [IO.File]::WriteAllText((Join-Path $temporary 'db.dump'),'abd',[Text.UTF8Encoding]::new($false))
     Assert-True (-not (Test-SanyuCopiedFiles $temporary $copy $manifestHash)) 'modified transfer byte escaped SHA gate'
     [IO.File]::WriteAllText((Join-Path $temporary 'db.dump'),'abc',[Text.UTF8Encoding]::new($false))
+    [IO.Directory]::Delete((Join-Path $temporary 'state/empty'))
+    Assert-True (-not (Test-SanyuCopiedFiles $temporary $copy $manifestHash)) 'missing nested empty directory escaped gate'
+    [IO.Directory]::CreateDirectory((Join-Path $temporary 'state/empty')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $temporary 'extra'),'x',[Text.UTF8Encoding]::new($false))
     Assert-True (-not (Test-SanyuCopiedFiles $temporary $copy $manifestHash)) 'extra unmanifested file escaped gate'
     [IO.File]::Delete((Join-Path $temporary 'extra'))
@@ -179,4 +193,23 @@ print('PASS nonempty shared NetworkID and DB alias')
 '@
 $networkResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $networkHarness
 Assert-True ($LASTEXITCODE -eq 0 -and $networkResult -eq 'PASS nonempty shared NetworkID and DB alias') 'remote network gate failed'
+$directoryHarness=@'
+import ast,os,pathlib,re,stat,sys,tempfile
+source=sys.stdin.read();tree=ast.parse(source)
+fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='snapshot_roots')
+def safe(path,directory=False):
+    info=path.lstat()
+    if stat.S_ISLNK(info.st_mode) or (directory and not stat.S_ISDIR(info.st_mode)): raise RuntimeError('unsafe')
+ns={'os':os,'pathlib':pathlib,'re':re,'stat':stat,'safe':safe}
+exec(compile(ast.Module(body=[fn],type_ignores=[]),'<directories>','exec'),ns)
+with tempfile.TemporaryDirectory(prefix='sanyu-roots-') as temp:
+    root=pathlib.Path(temp)
+    (root/'auth').mkdir();(root/'attachments').mkdir();(root/'state').mkdir();(root/'config').mkdir();(root/'secrets').mkdir()
+    (root/'state'/'empty').mkdir();(root/'attachments'/'accounts').mkdir();(root/'attachments'/'accounts'/'inactive').mkdir()
+    paths=[entry['path'] for entry in ns['snapshot_roots'](root)]
+    assert paths==['attachments','attachments/accounts','attachments/accounts/inactive','auth','config','secrets','state','state/empty'],paths
+print('PASS remote manifest preserves sorted nested empty directories')
+'@
+$directoryResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $directoryHarness
+Assert-True ($LASTEXITCODE -eq 0 -and $directoryResult -eq 'PASS remote manifest preserves sorted nested empty directories') 'remote directory inventory failed'
 Write-Host 'GREEN: snapshot manifest and transfer gates passed (local fixtures; no network).'
