@@ -41,3 +41,11 @@ jobs:
       - run: npm run test:ui
       - run: python -m unittest discover -s tests -v
       - run: git diff --check
+      - name: Build exact checked-out application image
+        run: docker build -t sanyulog:r2-check .
+      - name: Verify private media modules in image without credentials
+        run: docker run --rm sanyulog:r2-check python -c "import server, r2_media, r2_reconcile"
+      - name: Record checked-out revision and built image ID
+        run: |
+          git rev-parse HEAD
+          docker image inspect sanyulog:r2-check --format '{{.Id}}'
