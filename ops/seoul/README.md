@@ -148,7 +148,7 @@ fixture 在正式迁移前停止；保留受限清单及本地资产。明确列
 
 ### Nginx 与 HTTPS 维护入口
 
-`notes.896364.xyz.conf` 中两个活动 server 仅服务这个域名；HTTP 除 ACME challenge 外、HTTPS 所有路径/方法均返回 503 维护页，无活动 `proxy_pass`。最终业务代理完整保留在注释区，**只有 Task 5 数据/R2/认证及用户验收门禁通过后**，才能替换 HTTPS 的那个 `location /`；不能把它追加成重复 location。代理固定本项目 loopback，传原 Host/协议，覆盖客户端伪造的 X-Forwarded-For；64 MiB 入口余量供 25 MiB 附件 JSON/base64 信封，应用自身限额不变。若 Cloudflare 开启代理，`$remote_addr` 默认可能是边缘节点，不能把这称为真实访客 IP；不为本任务修改其它站点的全局 real_ip 信任配置。
+`notes.896364.xyz.conf` 中两个活动 server 仅服务这个域名；HTTP 除 ACME challenge 外、HTTPS 所有路径/方法均返回 503 维护页，无活动 `proxy_pass`。最终业务代理完整保留在注释区，**只有 Task 5 切换前的数据/R2/认证门禁通过后**，才能替换 HTTPS 的那个 `location /`；不能把它追加成重复 location。用户本人登录/保存验收必须在公网切换**之后**进行。代理固定本项目 loopback，传原 Host/协议，覆盖客户端伪造的 X-Forwarded-For；64 MiB 入口余量供 25 MiB 附件 JSON/base64 信封，应用自身限额不变。若 Cloudflare 开启代理，`$remote_addr` 默认可能是边缘节点，不能把这称为真实访客 IP；不为本任务修改其它站点的全局 real_ip 信任配置。
 
 首次没有证书时：保存既有 Nginx `-t` 成功和其它站点基线；确认两个目标 site 文件不存在，再只暂存模板**第一个 HTTP server 块**。ACME webroot 固定为站点专用 `/var/www/notes.896364.xyz-acme`，与 `0700` 应用根目录完全分离；不得用应用根目录中的 symlink 指向它，也不得放宽应用根目录权限。创建前确认该精确路径不存在、祖先无 symlink 且 Nginx worker 可遍历；若已存在则先验证归属，不复用其他站点目录。仅新建的站点 webroot、`.well-known/`、`acme-challenge/` 目录使用 root:root `0755`，公开 challenge 普通文件 `0644`；不能把 auth、附件、env、密钥或备份复制进这个公共目录。先 `sudo nginx -t` 成功才 reload。DNS 只新增 `notes.896364.xyz` 指向首尔，首次建议 DNS-only 以直接验证 origin，不触碰其它记录。
 
@@ -243,3 +243,13 @@ sudo -n python3 -B collect-migration-evidence.py --role target \
 ```
 
 两份证据文件含 storage ID、对象 key 和表摘要，必须按备份级别保管，不能贴在聊天或 Git。控制端从文件中只复制必要字段组成 `verify-migration.ps1` 的 `source`/`target`，并另行以 Cloudflare/S3 只读接口取得整桶全分页 R2 清单、每个有效对象的 HEAD 元数据和完整 GET 密文摘要/解密结果，再形成 `r2` 证据；**本采集器不访问 R2，也没有 R2 实测通过标志**。确认备份可恢复、无新增写入和人工验收仍是独立门禁。
+
+## Task 5：公网切换与停写备份
+
+`notes.896364.xyz.live.conf` 是仅用于完成 Task 3/4 线上门禁后的单站点切换模板；维护模板保持原样用于回退到 503。先核对源应用已停止、目标应用和 PostgreSQL 健康、精确镜像 ID、loopback 健康/认证拒绝、R2 完整读回及匿名拒绝、可信 TLS 和其他站点基线。实际活动 Nginx 路径必须由 `sites-enabled` 链接和 `nginx -T` 确认，不能假定文件名带 `.conf`；仅备份和原子替换该一个站点，`nginx -t` 成功后才 reload。HTTP ACME 路径保留，其他 HTTP 请求固定跳转到 `https://notes.896364.xyz`，业务只代理到 `127.0.0.1:18765`。使用 `curl -q --noproxy '*'` 做独立公网/TLS 检查，不能用 `-k`。错误 Host 的公网请求可能命中同一 Nginx 的**其他站点**，不得把其他站点的 200 误判为本应用接受了错误 Host；本应用的 Host 拒绝要在精确 loopback 上验证。
+
+公网切换后，由用户本人用原账号在新域名重新登录，核对既有内容并保存、刷新读取；代理或匿名 API 的 200/401 不代替此验收。不得代用户创建生产笔记或借用其 Cookie。旧站在新站可写期间必须保持停止；新站一旦产生新写入，不能直接重启旧站回滚，必须先冻结并对账增量。
+
+要取得同一时点的首尔恢复点，先将此站点切回 503 并从公网独立确认；观察本项目正在处理的请求/上传已排空（或明确超时和可能失败的请求），再停止**本项目 app**并确认退出，保留 PostgreSQL 运行。在 app 停止时取得 PG18 custom-format `pg_dump`，复制完整 auth/attachments/state 树及原始 32 字节 storage key、当前 Compose/Nginx。逐文件哈希、SQLite `quick_check`、`pg_restore -l` 及原树/副本比对全部通过后，重启 app，确认 loopback 健康，再经 `nginx -t` 恢复 live 配置。不能将 app 持续写入期间依次复制的 SQLite、附件和 `pg_dump` 称为一致备份。R2 对账报告不能仅沿用切换前版本：需以冻结的附件数据库行/本地密文为基准，重新逐对象 LIST/HEAD/GET/解密并核对私有状态；若要复用旧报告，须额外证明冻结的附件表和密文树均与旧基线完全一致，且新读回报告字节相同。R2 访问令牌 `r2.json` 不包含在离机包中；跨机恢复须重新安全配置桶级令牌。
+
+将上述不可变备份归档后，仅复制到 ACL 仅允许当前用户与 SYSTEM 的离机位置，校验归档 SHA-256、成员都在唯一预期根下、无链接/特殊成员，且归档内的逐文件校验清单通过。源站一致快照和源容器保留；不要为清理而删除任一恢复点。最终复查 HTTPS、私有 API 未登录拒绝、其他站点、Nginx、容器健康/OOM/重启、内存/磁盘和 R2 私有状态。缺少用户登录/保存确认或离机恢复材料核验时，报告为“已上线、待验收”，不能报告完全验收。

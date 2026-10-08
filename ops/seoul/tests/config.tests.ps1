@@ -210,4 +210,39 @@ Case 'inactive final proxy preserves host/proto and replaces untrusted client fo
     Assert-True ($headers['X-Forwarded-For'] -ceq '$remote_addr') 'client supplied forwarding must be replaced'
     Assert-True (((Named $directives 'client_max_body_size').args -join ' ') -ceq '64m') 'JSON attachment upload envelope needs headroom'
 }
+$livePath = Join-Path $ConfigDirectory 'notes.896364.xyz.live.conf'
+Case 'Task 5 live template exists separately from maintenance' {
+    Assert-True (Test-Path -LiteralPath $livePath -PathType Leaf) 'live Nginx artifact missing'
+    Assert-True ($livePath -cne $nginxPath) 'live template must not overwrite maintenance template'
+}
+$live = Read-NginxTree (Get-Content -Raw -LiteralPath $livePath)
+Case 'live template has only this domain and retains HTTP ACME challenge' {
+    Assert-True ($live.Count -eq 2 -and @(Named $live 'server').Count -eq 2) 'live template must have exactly two servers'
+    foreach ($s in $live) {
+        Assert-True (((Named $s.children 'server_name').args -join ' ') -ceq 'notes.896364.xyz') 'live template affects another domain'
+        Assert-True (@(All-Nodes $s.children | Where-Object name -CEQ 'include').Count -eq 0) 'live template has unreviewed include'
+    }
+    Assert-True (((Named $live[0].children 'listen').args -join ' ') -ceq '80') 'live HTTP listener changed'
+    Assert-True (((Named $live[1].children 'listen').args -join ' ') -ceq '443 ssl') 'live TLS listener changed'
+    $locations=@(All-Nodes $live | Where-Object name -CEQ 'location')
+    Assert-True ($locations.Count -eq 3) 'live template has extra location'
+    $acme=@(Named $live[0].children 'location' | Where-Object { ($_.args -join ' ') -ceq '^~ /.well-known/acme-challenge/' })
+    Assert-True ($acme.Count -eq 1 -and ((Named $acme[0].children 'root').args -join ' ') -ceq '/var/www/notes.896364.xyz-acme') 'live ACME webroot changed'
+    Assert-True (((Named $acme[0].children 'try_files').args -join ' ') -ceq '$uri =404') 'live ACME challenge changed'
+    $httpRoot=@(Named $live[0].children 'location' | Where-Object { ($_.args -join ' ') -ceq '/' })
+    Assert-True ($httpRoot.Count -eq 1 -and ((Named $httpRoot[0].children 'return').args -join ' ') -ceq '301 https://notes.896364.xyz$request_uri') 'HTTP redirect must use fixed host'
+}
+Case 'live HTTPS only proxies to the approved loopback and preserves forwarded boundary' {
+    Assert-True (((Named $live[1].children 'ssl_certificate').args -join ' ') -ceq '/etc/letsencrypt/live/notes.896364.xyz/fullchain.pem') 'live certificate changed'
+    Assert-True (((Named $live[1].children 'ssl_certificate_key').args -join ' ') -ceq '/etc/letsencrypt/live/notes.896364.xyz/privkey.pem') 'live certificate key changed'
+    $httpsRoot=@(Named $live[1].children 'location' | Where-Object { ($_.args -join ' ') -ceq '/' })
+    Assert-True ($httpsRoot.Count -eq 1) 'live HTTPS root missing'
+    $directives=$httpsRoot[0].children
+    Assert-True (((Named $directives 'proxy_pass').args -join ' ') -ceq 'http://127.0.0.1:18765') 'live upstream changed'
+    Assert-True (((Named $directives 'client_max_body_size').args -join ' ') -ceq '64m') 'live upload limit changed'
+    $headers=@{}
+    foreach ($h in @(Named $directives 'proxy_set_header')) { $headers[$h.args[0]]=$h.args[1] }
+    Assert-True ($headers.Count -eq 4 -and $headers['Host'] -ceq '$host' -and $headers['X-Forwarded-Proto'] -ceq '$scheme' -and $headers['X-Forwarded-For'] -ceq '$remote_addr' -and $headers['Connection'] -ceq '""') 'live forwarding boundary changed'
+    Assert-True (@(All-Nodes $live | Where-Object name -CIN @('fastcgi_pass','uwsgi_pass','alias','error_page')).Count -eq 0) 'live alternate upstream or path'
+}
 Write-Host "$script:passed configuration contracts passed (no Docker, Nginx, credentials or external resources accessed)."
