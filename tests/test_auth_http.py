@@ -9,6 +9,54 @@ from auth import Auth
 from server import make_server
 
 class AuthHttpTests(unittest.TestCase):
+    def test_attachment_auth_and_account_scope_precede_range_handling(self):
+        with tempfile.TemporaryDirectory() as root:
+            auth_db = Path(root) / 'auth.db'
+            Auth.initialize(auth_db, 'admin', 'test-password-12345')
+            server = make_server(Path(root) / 'data', 0, auth_db=auth_db, cookie_secure=False)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = 'http://127.0.0.1:' + str(server.server_port)
+            auth = server.auth
+            owner = auth.login('admin', 'test-password-12345', '127.0.0.1')
+            alice_id = auth.create_user(owner, 'alice', 'alice-password-12345')['id']
+            alice = auth.login('alice', 'alice-password-12345', '127.0.0.1')
+            project = server.store.create_project({'name': 'private'})
+            record = server.store.create_record({'project_id': project['id'], 'title': 'private'})
+            content = b'RIFF\x24\x00\x00\x00WAVEfmt ' + b'\x00' * 28
+            attachment = server.store.add_attachment(record['id'], 'private.wav', content, 'audio/wav')
+            path = '/api/attachments/' + attachment['id'] + '?preview=1'
+            def request(token=None, byte_range=None):
+                headers = {}
+                if token: headers['Cookie'] = 'process_log_session=' + token
+                if byte_range is not None: headers['Range'] = byte_range
+                req = urllib.request.Request(base + path, headers=headers)
+                try: return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10)
+                except urllib.error.HTTPError as error: return error
+            try:
+                # A direct media request deliberately needs no account header: the session is authority.
+                with request(owner, 'bytes=0-3') as response:
+                    self.assertEqual(response.status, 206)
+                    self.assertEqual(response.read(), b'RIFF')
+                    self.assertEqual(response.headers['Content-Type'], 'audio/wav')
+                for token, expected in [(None, 401), (alice, 404)]:
+                    with request(token) as response:
+                        self.assertEqual(response.status, expected)
+                        baseline = response.read()
+                    for byte_range in ['bytes=0-3', 'bytes=-3', 'bytes=9999-', 'bytes=0-1,4-5', 'bytes=invalid']:
+                        with self.subTest(account='anonymous' if token is None else 'foreign', byte_range=byte_range), request(token, byte_range) as response:
+                            self.assertEqual(response.status, expected)
+                            self.assertEqual(response.read(), baseline)
+                            self.assertIsNone(response.headers['Content-Range'])
+                            self.assertIsNone(response.headers['Accept-Ranges'])
+                            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                auth.update_user(owner, alice_id, {'enabled': False})
+                with request(alice, 'bytes=invalid') as response:
+                    self.assertEqual(response.status, 401)
+                    self.assertNotIn(b'RIFF', response.read())
+            finally:
+                server.shutdown(); server.server_close(); thread.join()
+
     def test_every_private_endpoint_requires_session(self):
         with tempfile.TemporaryDirectory() as root:
             auth_db = Path(root) / 'auth.db'

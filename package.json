@@ -8,7 +8,7 @@
     "check": "node --check static/app.js && node --check static/library.mjs && node --check static/notebook.js && node --check static/notebook-core.mjs && node --check static/cell-export.js && node --check static/auth-ui.js && node --check static/accounts-ui.js && node --check src/rich-editor.js && node --check src/mermaid-runtime.js && node --check static/mermaid-renderer.js && node --check static/mermaid-source.mjs && node --check static/notebook-export.mjs",
     "format": "prettier --write static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs src/*.js scripts/*.mjs",
     "format:check": "prettier --check static/*.js static/*.mjs static/*.css static/*.html tests/*.mjs scripts/*.cjs src/*.js scripts/*.mjs",
-    "test:ui": "node scripts/ui-smoke.cjs",
+    "test:ui": "node scripts/ui-smoke.cjs && node --test --test-name-pattern=\"authenticated media plays\" tests/notebook.test.mjs",
     "build:editor": "node scripts/build-editor.mjs",
     "build:brand": "node scripts/build-brand-icons.cjs"
   },

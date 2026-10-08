@@ -603,7 +603,18 @@ export class Notebook {
           "image/webp",
           "image/gif",
         ].includes(a.mime);
-        return `<div class="nb-file">${image ? `<a href="/api/attachments/${id}?preview=1" target="_blank" rel="noopener"><img src="/api/attachments/${id}?preview=1" alt="${esc(a.name)}" loading="lazy"></a>` : ""}<div><a href="/api/attachments/${id}">▧ ${esc(a.name)}</a><small>${(a.size / 1024).toFixed(1)} KB</small><button class="text-button" data-nb="unlink-file" data-file="${id}">移出此格</button></div></div>`;
+        const media = ["video/mp4", "video/webm"].includes(a.mime)
+          ? "video"
+          : ["audio/mpeg", "audio/ogg", "audio/wav"].includes(a.mime)
+            ? "audio"
+            : "";
+        const url = `/api/attachments/${encodeURIComponent(id)}`;
+        const preview = image
+          ? `<a href="${url}?preview=1" target="_blank" rel="noopener"><img src="${url}?preview=1" alt="${esc(a.name)}" loading="lazy"></a>`
+          : media
+            ? `<${media} class="nb-media-preview" controls preload="metadata" src="${url}?preview=1" aria-label="${esc(a.name)}"></${media}>`
+            : "";
+        return `<div class="nb-file">${preview}<div><a href="${url}">▧ ${esc(a.name)}</a><small>${(a.size / 1024).toFixed(1)} KB</small><button class="text-button" data-nb="unlink-file" data-file="${esc(id)}">移出此格</button></div></div>`;
       })
       .join("");
   }

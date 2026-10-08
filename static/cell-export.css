@@ -165,6 +165,9 @@ a {
   object-fit: contain;
   margin: 0 0 6px;
 }
+.nb-export-attachment .nb-media-preview {
+  max-width: 100%;
+}
 .nb-export-table thead {
   display: table-header-group;
 }

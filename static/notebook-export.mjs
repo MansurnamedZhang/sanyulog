@@ -22,7 +22,17 @@ function attachmentsHTML(ids, attachments) {
     .filter(Boolean)
     .map((item) => {
       const url = `/api/attachments/${encodeURIComponent(item.id)}`;
-      return `<div class="nb-export-attachment">${imageTypes.has(item.mime) ? `<img src="${url}?preview=1" alt="${safe(item.name)}">` : ""}<a href="${url}">${safe(item.name)}</a></div>`;
+      const media = ["video/mp4", "video/webm"].includes(item.mime)
+        ? "video"
+        : ["audio/mpeg", "audio/ogg", "audio/wav"].includes(item.mime)
+          ? "audio"
+          : "";
+      const preview = imageTypes.has(item.mime)
+        ? `<img src="${url}?preview=1" alt="${safe(item.name)}">`
+        : media
+          ? `<${media} class="nb-media-preview" controls preload="metadata" src="${url}?preview=1" aria-label="${safe(item.name)}"></${media}>`
+          : "";
+      return `<div class="nb-export-attachment">${preview}<a href="${url}">${safe(item.name)}</a></div>`;
     })
     .join("");
 }

@@ -4,6 +4,7 @@ import ipaddress
 import json
 import mimetypes
 import os
+import re
 import sqlite3
 import sys
 from http.cookies import SimpleCookie, CookieError
@@ -18,6 +19,55 @@ from store import Conflict, Store
 BASE = Path(__file__).resolve().parent
 
 
+def preview_mime(mime, content):
+    """Allow only declared passive media with a matching container signature.
+
+    This is a conservative signature check, not a decoder or a codec guarantee.
+    Inspect the full verified plaintext before selecting a partial response.
+    """
+    if mime == 'image/png' and content.startswith(b'\x89PNG\r\n\x1a\n'):
+        return mime
+    if mime == 'image/jpeg' and content.startswith(b'\xff\xd8\xff'):
+        return mime
+    if mime == 'image/gif' and content.startswith((b'GIF87a', b'GIF89a')):
+        return mime
+    if (mime == 'image/webp' and content[:4] == b'RIFF'
+            and content[8:12] == b'WEBP' and content[12:16] in (b'VP8 ', b'VP8L', b'VP8X')):
+        return mime
+    if mime == 'video/mp4' and len(content) >= 16 and content[4:8] == b'ftyp':
+        box_size = int.from_bytes(content[:4], 'big')
+        # Do not treat every ISO base-media file (e.g. AVIF/HEIC) as an MP4.
+        if (16 <= box_size <= len(content) and box_size % 4 == 0
+                and content[8:12] in (b'isom', b'iso2', b'mp41', b'mp42', b'avc1', b'M4V ')):
+            return mime
+    if mime == 'video/webm' and content.startswith(b'\x1a\x45\xdf\xa3'):
+        # The EBML DocType signature distinguishes WebM from generic Matroska.
+        if b'\x42\x82\x84webm' in content[4:4096]:
+            return mime
+    if mime == 'audio/mpeg':
+        offset = 0
+        if (len(content) >= 10 and content[:3] == b'ID3' and content[3] in (2, 3, 4)
+                and all(value < 128 for value in content[6:10])):
+            tag_size = 0
+            for value in content[6:10]:
+                tag_size = (tag_size << 7) | value
+            offset = 10 + tag_size + (10 if content[3] == 4 and content[5] & 16 else 0)
+        frame = content[offset:offset + 4]
+        if (len(frame) == 4 and frame[0] == 255 and frame[1] & 224 == 224
+                and frame[1] & 24 != 8 and frame[1] & 6 == 2
+                and frame[2] >> 4 not in (0, 15) and frame[2] & 12 != 12):
+            return mime
+    if mime == 'audio/ogg' and len(content) >= 28 and content[:5] == b'OggS\x00':
+        packet = 27 + content[26]
+        if content[26] and content[packet:packet + 8] == b'OpusHead':
+            return mime
+        if content[26] and content[packet:packet + 7] == b'\x01vorbis':
+            return mime
+    if mime == 'audio/wav' and len(content) >= 12 and content[:4] == b'RIFF' and content[8:12] == b'WAVE':
+        return mime
+    return 'application/octet-stream'
+
+
 class Handler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
@@ -26,7 +76,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def send(self, data, content_type='application/json; charset=utf-8', status=200, filename=None, inline=False, cookie=None):
+    def send(self, data, content_type='application/json; charset=utf-8', status=200, filename=None, inline=False, cookie=None, extra_headers=None):
         if not isinstance(data, bytes):
             data = json.dumps(data, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -40,8 +90,44 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Set-Cookie', cookie)
         if filename:
             self.send_header('Content-Disposition', ('inline' if inline else 'attachment')+"; filename*=UTF-8''"+quote(filename, safe=''))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
+
+    def send_attachment(self, metadata, content, *, preview: bool, range_header: str | None) -> None:
+        """Called only after the account store authorized and verified the read."""
+        mime = preview_mime(metadata['mime'], content)
+        headers = {'Accept-Ranges': 'bytes'}
+        size = len(content)
+        status = 200
+        payload = content
+        if range_header is not None:
+            value = range_header.strip()
+            # RFC 9110 requires unknown range units to be ignored.
+            if value.partition('=')[0].lower() == 'bytes' or '=' not in value:
+                match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', value, re.IGNORECASE)
+                start, end = 0, -1
+                if match and any(match.groups()) and size:
+                    first, last = match.groups()
+                    def number(digits):
+                        # Saturate before conversion: untrusted decimals can exceed Python's int limit.
+                        digits = digits.lstrip('0') or '0'
+                        return size + 1 if len(digits) > len(str(size)) else int(digits)
+                    if first:
+                        start = number(first)
+                        end = min(number(last), size - 1) if last else size - 1
+                    elif number(last):
+                        start = max(0, size - number(last))
+                        end = size - 1
+                if start > end or start >= size:
+                    headers['Content-Range'] = f'bytes */{size}'
+                    status, payload = 416, b''
+                else:
+                    headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+                    status, payload = 206, content[start:end + 1]
+        return self.send(payload, mime, status=status, filename=metadata['name'],
+                         inline=preview and mime != 'application/octet-stream', extra_headers=headers)
 
     def body(self, limit=2*1024*1024):
         length = int(self.headers.get('Content-Length', '0'))
@@ -176,8 +262,10 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) == 3 and parts[:2] == ['api', 'attachments']:
                     a, content = s.read_attachment(parts[2])
                     preview = parse_qs(u.query).get('preview') == ['1']
-                    mime = a['mime'] if a['mime'] in ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] else 'application/octet-stream'
-                    return self.send(content, mime, filename=a['name'], inline=preview and mime != 'application/octet-stream')
+                    ranges = self.headers.get_all('Range', [])
+                    # No validators are emitted, so If-Range cannot be satisfied.
+                    range_header = ','.join(ranges) if ranges and not self.headers.get('If-Range') else None
+                    return self.send_attachment(a, content, preview=preview, range_header=range_header)
                 raise KeyError('页面不存在')
             if path == '/api/restore' and method == 'POST':
                 s.restore(self.body(250*1024*1024))

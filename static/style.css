@@ -1038,6 +1038,9 @@ dialog form {
   object-fit: contain;
   margin: 0 auto;
 }
+.nb-file .nb-media-preview {
+  max-width: 100%;
+}
 .nb-file > div {
   padding: 9px 11px;
   display: flex;
