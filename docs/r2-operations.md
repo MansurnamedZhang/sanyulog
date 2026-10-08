@@ -1,6 +1,8 @@
 # 三余记私有 R2 运维与恢复手册
 
-本手册对应首尔 Python + PostgreSQL + 私有 R2 方案，不是 Workers/D1 部署。执行前核对[批准设计](superpowers/specs/2026-10-08-seoul-r2-hybrid-deployment-design.md)、目标账号、专属容器、挂载路径和精确 Git SHA；下列路径是本工具的部署契约，若实际挂载不同，先修订受限运维清单，再执行。本文不代表已创建桶、已构建镜像或已部署。不得向生产笔记写入测试数据。
+本手册对应首尔 Python + PostgreSQL + 私有 R2 方案，不是 Workers/D1 部署。执行前核对[批准设计](superpowers/specs/2026-10-08-seoul-r2-hybrid-deployment-design.md)、目标账号、专属容器、挂载路径和精确 Git SHA。首尔目标根目录为 `/home/ubuntu/apps/sanyulog`；下表的子目录是待运维清单确认的目标挂载契约，不代表已经部署，若实际挂载不同，先修订清单和命令，再执行。不得向生产笔记写入测试数据。
+
+源端与目标端不能混用：源端是局域网实例，其既有容器为 `process-log`，附件/状态位于 `/home/hans/services/process-log/` 下，认证库位于 `/home/hans/.local/share/process-log-auth/`。这些仅用于源端盘点、备份和回退，不是首尔命令的目标。以下可执行示例均在首尔执行；首尔应用容器名尚待运维确认，必须先将 Bash 变量 `sanyulog_container` 设置为核实后的专属目标容器名，不能照抄源端容器名。
 
 ## 1. 发布门禁与镜像
 
@@ -18,20 +20,21 @@ R2 凭据仅在部署 Linux 上通过受控安全渠道写入专用文件，文�
 
 | 用途 | 宿主机受限路径 | 容器路径 | 权限与挂载 |
 | --- | --- | --- | --- |
-| R2 凭据 | `/home/hans/services/process-log/secrets/r2.json` | `/run/secrets/r2.json` | 文件 UID/GID `1000:1000`、恰好 `0600`、只读 bind |
-| 原始 32 字节密钥 | `/home/hans/services/process-log/secrets/storage.key` | `/run/secrets/storage.key` | 保留原值、UID/GID `1000:1000`、`0600`、只读 bind |
-| 完整认证库 | `/home/hans/.local/share/process-log-auth/auth.db` | `/auth/auth.db` | 专用受限目录，服务 UID 1000 可读写 |
-| 本地附件密文镜像 | `/home/hans/services/process-log/attachments` | `/attachments` | 专用受限目录，服务 UID 1000 可读写 |
-| 状态与审计清单 | `/home/hans/services/process-log/state` | `/state` | 专用受限目录，服务 UID 1000 可读写 |
+| R2 凭据 | `/home/ubuntu/apps/sanyulog/secrets/r2.json` | `/run/secrets/r2.json` | 文件 UID/GID `1000:1000`、恰好 `0600`、只读 bind |
+| 原始 32 字节密钥 | `/home/ubuntu/apps/sanyulog/secrets/storage.key` | `/run/secrets/storage.key` | 保留原值、UID/GID `1000:1000`、`0600`、只读 bind |
+| 完整认证库 | `/home/ubuntu/apps/sanyulog/auth/auth.db` | `/auth/auth.db` | 专用受限目录，服务 UID 1000 可读写 |
+| 本地附件密文镜像 | `/home/ubuntu/apps/sanyulog/attachments` | `/attachments` | 专用受限目录，服务 UID 1000 可读写 |
+| 状态与审计清单 | `/home/ubuntu/apps/sanyulog/state` | `/state` | 专用受限目录，服务 UID 1000 可读写 |
 
 `secrets` 和运维输出目录用 `0700`，受限父目录不能是符号链接。凭据文件自身及其容器内所有父路径均不得是符号链接；禁止硬编码秘密到 Compose。只读挂载不会替代权限检查：镜像以 UID/GID 1000 运行，root 所有的 `0600` 文件无法被该用户读取。凭据被安全交付后，Linux 运维员仅检查元数据和权限，不读取到终端：
 
 ```bash
-stat -c '%a %u:%g %F %n' /home/hans/services/process-log/secrets /home/hans/services/process-log/secrets/r2.json
-test ! -L /home/hans/services/process-log/secrets/r2.json
-test "$(stat -c '%a:%u:%g' /home/hans/services/process-log/secrets/r2.json)" = '600:1000:1000'
+: "${sanyulog_container:?请先设置核实后的首尔专属应用容器名}"
+stat -c '%a %u:%g %F %n' /home/ubuntu/apps/sanyulog/secrets /home/ubuntu/apps/sanyulog/secrets/r2.json
+test ! -L /home/ubuntu/apps/sanyulog/secrets/r2.json
+test "$(stat -c '%a:%u:%g' /home/ubuntu/apps/sanyulog/secrets/r2.json)" = '600:1000:1000'
 # 对实际应用容器确认只读 bind、容器 UID、原有服务的所有挂载和父路径。
-docker exec --user 1000:1000 process-log python -c 'from pathlib import Path; from r2_media import R2Credentials; R2Credentials.load(Path("/run/secrets/r2.json")); print("credential file validated")'
+docker exec --user 1000:1000 "$sanyulog_container" python -c 'from pathlib import Path; from r2_media import R2Credentials; R2Credentials.load(Path("/run/secrets/r2.json")); print("credential file validated")'
 ```
 
 每个检查须成功才继续；不要打印 `R2Credentials` 的字段、读取文件内容或使用 `docker inspect` 输出全部环境。代码严格要求 POSIX 的普通文件、恰好 `0600`、属主为 root 或有效 UID，且当前进程能读；Windows ACL 不被当作 Linux 私密性证明。
@@ -44,7 +47,9 @@ docker exec --user 1000:1000 process-log python -c 'from pathlib import Path; fr
 - `PROCESS_LOG_ENCRYPTION_KEY_FILE=/run/secrets/storage.key`，必须保留原始密钥。
 - 原有 `DATABASE_URL`、`PROCESS_LOG_DATA=/state`、`PROCESS_LOG_ATTACHMENTS=/attachments`、`PROCESS_LOG_AUTH_DB=/auth/auth.db`、鉴权、HTTPS Origin、可信代理继续按独立受限部署配置提供；不要把数据库认证值写入本手册或构建日志。
 
-全部三个 R2 变量都不存在时维持旧部署的本地行为。任意变量存在（即使为空）却未完整提供、缺少加密密钥、凭据不安全/不可读或账号配置无效，都拒绝启动，不静默降级为 local-only。启动成功只证明配置和依赖可用，不证明 R2 网络、权限或对象已对账；必须继续隔离联调。应用端口仅对宿主机 loopback 开放，入口验收前维持维护页。
+全部三个 R2 变量都不存在时维持旧部署的本地行为，包括 PostgreSQL 未显式设置附件根的旧布局。任意变量存在（即使为空）却未完整提供、桶名不严格等于 `sanyulog-media`、PostgreSQL 未显式设置 `PROCESS_LOG_ATTACHMENTS`、缺少加密密钥、凭据不安全/不可读或账号配置无效，都拒绝启动，不静默降级为 local-only。桶名与 PostgreSQL 附件根在加载凭据、创建 SDK 客户端、绑定端口或创建数据目录前检查。启动成功只证明配置和依赖可用，不证明 R2 网络、权限或对象已对账；必须继续隔离联调。应用端口仅对宿主机 loopback 开放，入口验收前维持维护页。
+
+启用 R2 前若原 PostgreSQL 部署使用默认布局（owner 为 `<state>/attachments`，次账号为 `<state>/accounts/<storage_id>/attachments`），必须另行授权并完成受控路径迁移：停写、备份、明确每个账号的新路径和挂载，验证密文及数据库引用不变，再启用显式附件根。不能只设置新变量并让程序创建空目录，也不能把旧数据静默搬走。对账只支持显式布局；当 owner 根名为 `attachments` 时，会逐层做已知旧路径的存在性检查，发现旧次账号目录或链接/重解析点即以不含路径与账号的 unsupported-layout 错误拒绝，不读取其密文、不遍历或自动迁移。混合布局宁可拒绝；不能用改名规避门禁，须核对迁移清单。任意其它自定义布局不被自动发现或支持。
 
 ## 3. 备份与隔离恢复门禁
 
@@ -56,12 +61,13 @@ docker exec --user 1000:1000 process-log python -c 'from pathlib import Path; fr
 
 ## 4. inventory → dry-run → 单账号 apply
 
-以下命令只在授权部署/恢复窗口运行，当前代码任务不得执行生产上传。确认应用容器名为本工具的 `process-log`，所有路径均对应表中受限挂载，`DATABASE_URL` 已由该容器原有安全配置提供。输出不含文件名/笔记正文/凭据，但仍属于受限账号清单；宿主机运行 `umask 077`，把 stdout manifest 和 stderr 审计日志保存到预先创建的专用受限目录，不在共享日志中展示。使用不同文件名保留每次运行证据，不覆盖之前清单。
+以下命令只在授权的首尔部署/恢复窗口运行，当前代码任务不得执行生产上传。确认 `sanyulog_container` 为核实后的首尔专属应用容器名，所有路径均对应表中受限挂载，`DATABASE_URL` 已由该容器原有安全配置提供。输出不含文件名/笔记正文/凭据，但仍属于受限账号清单；宿主机运行 `umask 077`，把 stdout manifest 和 stderr 审计日志保存到预先创建的专用受限目录，不在共享日志中展示。使用不同文件名保留每次运行证据，不覆盖之前清单。
 
 ```bash
 # Bash；此函数不读取或显示任何凭据值。
 reconcile() {
-  docker exec --user 1000:1000 process-log python r2_reconcile.py "$@" \
+  : "${sanyulog_container:?请先设置核实后的首尔专属应用容器名}"
+  docker exec --user 1000:1000 "$sanyulog_container" python r2_reconcile.py "$@" \
     --auth-db /auth/auth.db --attachments-root /attachments \
     --key-file /run/secrets/storage.key
 }

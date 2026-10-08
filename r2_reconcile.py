@@ -32,6 +32,30 @@ LIMIT = 25 * 1024 * 1024
 LOG = logging.getLogger('r2_reconcile')
 
 
+class UnsupportedPostgreSQLLayout(ValueError):
+    """A known legacy layout needs an explicitly authorized migration."""
+
+
+def _reject_legacy_pg_layout(root, storage_id):
+    if storage_id == 'owner' or root.name != 'attachments':
+        return
+    # Existence-only probe of the known default layout; never resolve, read,
+    # or use it as an alternate media root. Walk outward-to-inward so even
+    # dangling links/reparse points are rejected before traversing them.
+    candidate = root.parent
+    for name in ('accounts', storage_id, 'attachments'):
+        candidate = candidate / name
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            return
+        if (name == 'attachments' or stat.S_ISLNK(info.st_mode)
+                or getattr(info, 'st_file_attributes', 0) & 0x400
+                or not stat.S_ISDIR(info.st_mode)):
+            raise UnsupportedPostgreSQLLayout(
+                'Unsupported PostgreSQL attachment layout; controlled migration to explicit PROCESS_LOG_ATTACHMENTS required')
+
+
 @dataclass(frozen=True)
 class MediaItem:
     storage_id: str
@@ -224,6 +248,7 @@ def build_inventory(auth_db, database_url, attachments_root, key_file) -> list[M
         for storage_id, enabled in _auth_accounts(auth_db):
             schema = ('public' if storage_id == 'owner' else 'process_log_user_'+storage_id) if database_url else None
             if database_url:
+                _reject_legacy_pg_layout(root, storage_id)
                 files = root if storage_id == 'owner' else root / 'accounts' / storage_id
                 db = None
                 with _pg(database_url) as c:
@@ -246,6 +271,8 @@ def build_inventory(auth_db, database_url, attachments_root, key_file) -> list[M
             accounts.append(scope)
             items.extend(_local_item(scope, digest, size, count, cipher) for digest, (size, count) in sorted(refs.items()))
         return Inventory(items, accounts, (Path(auth_db), database_url, root, key_file))
+    except UnsupportedPostgreSQLLayout:
+        raise
     except Exception:
         raise ValueError('Media inventory validation failed') from None
 
@@ -264,6 +291,7 @@ def _live_scope(items, account, apply):
         raise ValueError('Account no longer exists')
     cipher = StorageCipher(checked_media_path(key_file))
     if database_url:
+        _reject_legacy_pg_layout(checked_media_path(root), account.storage_id)
         with _pg(database_url, apply=apply) as c:
             if not _pg_exists(c, account.schema):
                 raise ValueError('Account data area is uninitialized')
@@ -424,6 +452,9 @@ def main(argv=None):
         report = (sync_inventory if args.command == 'sync' else prune_unreferenced)(items, mirror, apply=args.apply)
         print(json.dumps(report.manifest(), sort_keys=True), flush=True)
         return 0 if report.complete else 2
+    except UnsupportedPostgreSQLLayout:
+        print(json.dumps({'complete': False, 'error': 'Unsupported PostgreSQL attachment layout; controlled migration to explicit PROCESS_LOG_ATTACHMENTS required'}), file=sys.stderr, flush=True)
+        return 1
     except Exception:
         print(json.dumps({'complete': False, 'error': 'Reconciliation failed validation or access checks'}), file=sys.stderr, flush=True)
         return 1

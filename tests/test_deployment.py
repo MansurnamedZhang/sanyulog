@@ -26,6 +26,51 @@ def isolated_env(**values):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_wrong_r2_bucket_rejected_before_credentials_sdk_socket_or_data(self):
+        for bucket in ('unrelated-bucket', 'Sanyulog-media', ' sanyulog-media'):
+            with self.subTest(bucket=bucket), tempfile.TemporaryDirectory() as folder:
+                data = Path(folder) / 'not-initialized'
+                config = dict(zip(R2_ENV, ('a' * 32, bucket, '/restricted/r2.json')))
+                with patch.dict(os.environ, isolated_env(**config), clear=True), \
+                        patch('r2_media.R2Credentials.load', side_effect=AssertionError('credentials accessed')), \
+                        patch('r2_media.create_r2_client', side_effect=AssertionError('SDK accessed')), \
+                        patch('server.ThreadingHTTPServer', side_effect=AssertionError('socket bound')):
+                    with self.assertRaisesRegex(ValueError, 'sanyulog-media'):
+                        make_server(data, 0, encryption_key_file=Path(folder) / 'key')
+                self.assertFalse(data.exists())
+
+    def test_r2_pg_requires_explicit_attachment_root_before_side_effects(self):
+        config = dict(zip(R2_ENV, ('a' * 32, 'sanyulog-media', '/restricted/r2.json')))
+        for attachments in (None, ''):
+            with self.subTest(attachments=attachments), tempfile.TemporaryDirectory() as folder:
+                data = Path(folder) / 'not-initialized'
+                with patch.dict(os.environ, isolated_env(**config), clear=True), \
+                        patch('r2_media.R2Credentials.load', side_effect=AssertionError('credentials accessed')), \
+                        patch('r2_media.create_r2_client', side_effect=AssertionError('SDK accessed')), \
+                        patch('server.ThreadingHTTPServer', side_effect=AssertionError('socket bound')):
+                    with self.assertRaisesRegex(ValueError, 'PROCESS_LOG_ATTACHMENTS'):
+                        make_server(data, 0, database_url='postgresql://isolated-test',
+                                    attachments_dir=attachments, encryption_key_file=Path(folder) / 'key')
+                self.assertFalse(data.exists())
+
+    def test_no_r2_pg_still_passes_default_attachment_layout_to_store(self):
+        from store import Store
+        # Substitute only the unavailable PostgreSQL construction boundary.
+        # Real legacy PostgreSQL default-layout tests also run in Linux CI.
+        def local_store(root, database_url, attachments_dir, encryption_key_file, *, media_mirror):
+            self.assertEqual(database_url, 'postgresql://isolated-test')
+            self.assertIsNone(attachments_dir)
+            self.assertIsNone(media_mirror)
+            return Store(root, encryption_key_file=encryption_key_file)
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, isolated_env(), clear=True), \
+                patch('pgstore.PostgreSQLStore', side_effect=local_store):
+            server = make_server(folder, 0, database_url='postgresql://isolated-test')
+            try:
+                self.assertTrue(server.store.files.is_dir())
+                self.assertIsNone(server.account_stores.attachments_dir)
+            finally:
+                server.server_close()
+
     def test_runtime_copy_payload_imports_r2_modules_without_copying_private_state(self):
         # Regression: missing module COPY breaks the real image at import/startup.
         # Exercise COPY's explicit payload locally; CI separately builds Docker.
@@ -95,6 +140,7 @@ class DeploymentTests(unittest.TestCase):
             key = Path(folder) / 'storage.key'
             key.write_bytes(bytes(range(32)))
             server = make_server(Path(folder) / 'data', 0, encryption_key_file=key)
+            self.assertEqual(server.store.media_mirror.bucket, 'sanyulog-media')
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

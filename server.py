@@ -342,10 +342,14 @@ def make_server(root, port=8765, *, host='127.0.0.1', allowed_origins=None, data
     if any(value is not None for value in r2_values):
         if not all(value and value.strip() for value in r2_values):
             raise ValueError('R2 配置必须同时提供账号、桶和凭据文件')
+        account, bucket, credentials_file = r2_values
+        if bucket != 'sanyulog-media':
+            raise ValueError('R2 媒体镜像仅支持专用桶 sanyulog-media')
+        if database_url and not attachments_dir:
+            raise ValueError('PostgreSQL R2 媒体镜像必须显式配置 PROCESS_LOG_ATTACHMENTS')
         if not encryption_key_file:
             raise ValueError('R2 媒体镜像需要配置原始加密密钥')
         from r2_media import R2Credentials, R2Mirror, create_r2_client
-        account, bucket, credentials_file = r2_values
         credentials = R2Credentials.load(Path(credentials_file))
         media_mirror = R2Mirror(create_r2_client(account, credentials), bucket)
     origins = set(allowed_origins or [])

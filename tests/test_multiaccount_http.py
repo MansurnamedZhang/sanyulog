@@ -77,7 +77,7 @@ class R2MultiAccountHttpTests(unittest.TestCase):
         Auth.initialize(db, 'admin', 'owner-password-123')
         self.client = MemoryS3()
         env = {'PROCESS_LOG_R2_ACCOUNT_ID': 'a' * 32,
-               'PROCESS_LOG_R2_BUCKET': 'test-private',
+               'PROCESS_LOG_R2_BUCKET': 'sanyulog-media',
                'PROCESS_LOG_R2_CREDENTIALS_FILE': 'test-credentials'}
         with patch.dict(os.environ, env), patch('r2_media.R2Credentials.load', return_value=R2Credentials('fake-access', 'fake-secret')), patch('r2_media.create_r2_client', return_value=self.client):
             self.server = make_server(self.root / 'data', 0, auth_db=db,
@@ -133,8 +133,8 @@ class R2MultiAccountHttpTests(unittest.TestCase):
             attachments.append(json.loads(raw))
         digest = attachments[0]['file']
         self.assertEqual(set(self.client.objects), {
-            ('test-private', 'v1/owner/' + digest),
-            ('test-private', 'v1/' + self.alice_key + '/' + digest)})
+            ('sanyulog-media', 'v1/owner/' + digest),
+            ('sanyulog-media', 'v1/' + self.alice_key + '/' + digest)})
         before = list(self.client.calls)
         for token, foreign in ((self.alice, attachments[0]), (self.owner, attachments[1])):
             self.assertEqual(self.request('/api/attachments/' + foreign['id'], token)[0], 404)
@@ -142,7 +142,7 @@ class R2MultiAccountHttpTests(unittest.TestCase):
         self.assertEqual(self.request('/api/attachments/' + attachments[0]['id'])[0], 401)
         self.assertEqual(self.client.calls, before)
         self.assertEqual(self.request('/api/records/' + records[0]['id'] + '/attachments', self.alice, b'attack')[0], 404)
-        self.client.objects.pop(('test-private', 'v1/' + self.alice_key + '/' + digest))
+        self.client.objects.pop(('sanyulog-media', 'v1/' + self.alice_key + '/' + digest))
         with self.assertLogs('store', level='WARNING'):
             self.assertEqual(self.request('/api/attachments/' + attachments[1]['id'], self.alice, claimed_account='owner'), (200, content))
         alice_store = self.server.account_stores.stores[self.alice_key]

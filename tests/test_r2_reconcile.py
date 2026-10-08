@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from contextlib import closing, redirect_stdout
+from contextlib import closing, contextmanager, redirect_stdout
 from unittest.mock import patch
 
 from auth import USER_SCHEMA
@@ -295,6 +295,73 @@ class ReconcileTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
 
+class PostgreSQLLayoutTests(unittest.TestCase):
+    setUp = ReconcileTests.setUp
+    add = ReconcileTests.add
+
+    @contextmanager
+    def pg_fixture(self, database_url, *, apply=False):
+        # PostgreSQL transport is unavailable locally. Keep real encrypted
+        # files and DB references, translating only the read-only SQL boundary.
+        class Reader:
+            def execute(reader, query, parameters=()):
+                if query.startswith('SELECT 1 FROM information_schema.tables'):
+                    return self.owner_db.execute('SELECT 1 WHERE ?', (parameters[0] in self.schemas,))
+                for schema, connection in self.schemas.items():
+                    if '"' + schema + '".' in query:
+                        return connection.execute(query.replace('"' + schema + '".', '').replace('%s', '?'), parameters)
+                raise AssertionError('Unexpected inventory SQL')
+        with closing(sqlite3.connect(self.s.db.as_uri() + '?mode=ro', uri=True)) as self.owner_db, \
+                closing(sqlite3.connect(self.other.db.as_uri() + '?mode=ro', uri=True)) as secondary:
+            self.owner_db.execute('PRAGMA query_only=ON')
+            secondary.execute('PRAGMA query_only=ON')
+            self.schemas = {'public': self.owner_db, 'process_log_user_' + self.disabled: secondary}
+            yield Reader()
+
+    def test_pg_legacy_secondary_layout_is_rejected_without_reading_or_creating(self):
+        self.add(self.other)
+        before = {p.relative_to(self.root) for p in self.root.rglob('*')}
+        with patch('r2_reconcile._pg', self.pg_fixture):
+            with self.assertRaisesRegex(ValueError, 'Unsupported PostgreSQL attachment layout'):
+                build_inventory(self.auth, 'isolated-fixture', self.s.files, self.key)
+        self.assertEqual(before, {p.relative_to(self.root) for p in self.root.rglob('*')})
+
+    @unittest.skipUnless(os.name == 'posix', 'requires POSIX symlink support')
+    def test_pg_legacy_parent_link_is_rejected_without_traversal(self):
+        explicit = self.root / 'linked-state' / 'attachments'
+        explicit.mkdir(parents=True)
+        (explicit.parent / 'accounts').symlink_to(self.root / 'outside-missing', target_is_directory=True)
+        with patch('r2_reconcile._pg', self.pg_fixture):
+            with self.assertRaisesRegex(ValueError, 'Unsupported PostgreSQL attachment layout'):
+                build_inventory(self.auth, 'isolated-fixture', explicit, self.key)
+        self.assertFalse((self.root / 'outside-missing').exists())
+
+    def test_pg_explicit_secondary_layout_verifies_and_leaves_absent_scope_uncreated(self):
+        _, _, attachment = self.add(self.other)
+        explicit = self.root / 'explicit' / 'attachments'
+        files = explicit / 'accounts' / self.disabled
+        files.mkdir(parents=True)
+        (files / attachment['file']).write_bytes((self.other.files / attachment['file']).read_bytes())
+        before = {p.relative_to(self.root) for p in self.root.rglob('*')}
+        with patch('r2_reconcile._pg', self.pg_fixture):
+            items = build_inventory(self.auth, 'isolated-fixture', explicit, self.key)
+        self.assertEqual([(i.storage_id, i.status) for i in items], [(self.disabled, 'verified_local')])
+        self.assertFalse(next(a for a in items.accounts if a.storage_id == self.absent).initialized)
+        self.assertEqual(before, {p.relative_to(self.root) for p in self.root.rglob('*')})
+
+    def test_pg_layout_ambiguity_after_inventory_blocks_cloud_apply(self):
+        explicit = self.root / 'new-state' / 'attachments'
+        explicit.mkdir(parents=True)
+        with patch('r2_reconcile._pg', self.pg_fixture):
+            items = build_inventory(self.auth, 'isolated-fixture', explicit, self.key).for_account(self.disabled)
+        (explicit.parent / 'accounts' / self.disabled / 'attachments').mkdir(parents=True)
+        with patch('r2_reconcile._pg', self.pg_fixture):
+            report = prune_unreferenced(items, self.mirror, apply=True)
+        self.assertFalse(report.complete)
+        self.assertEqual(report.entries[0]['status'], 'account_unavailable')
+        self.assertEqual(self.client.calls, [])
+
+
 @unittest.skipUnless(os.environ.get('PROCESS_LOG_TEST_DATABASE_URL'), 'requires isolated PostgreSQL test database')
 class PostgreSQLInventoryTests(unittest.TestCase):
     add = ReconcileTests.add
@@ -355,8 +422,26 @@ class PostgreSQLInventoryTests(unittest.TestCase):
             self.assertIsNone(c.execute(query, ('process_log_user_'+self.absent,)).fetchone())
         items = self.inventory()
         self.assertEqual({i.storage_id for i in items}, {'owner', self.disabled})
+        self.assertTrue(all(i.status == 'verified_local' for i in items))
         with psycopg.connect(self.dsn) as c:
             self.assertIsNone(c.execute(query, ('process_log_user_'+self.absent,)).fetchone())
+
+    def test_pg_default_layout_needs_migration_and_does_not_create_missing_schema(self):
+        from account_stores import AccountStores
+        from pgstore import PostgreSQLStore
+        import psycopg
+        state = self.root / 'legacy-state'
+        owner = PostgreSQLStore(state, self.dsn, encryption_key_file=self.key)
+        stores = AccountStores(owner, state, self.dsn, encryption_key_file=self.key)
+        secondary = stores.get({'storage_id': self.disabled})
+        self.add(secondary)
+        before = {p.relative_to(self.root) for p in self.root.rglob('*')}
+        with self.assertRaisesRegex(ValueError, 'Unsupported PostgreSQL attachment layout'):
+            build_inventory(self.auth, self.dsn, owner.files, self.key)
+        self.assertEqual(before, {p.relative_to(self.root) for p in self.root.rglob('*')})
+        with psycopg.connect(self.dsn) as c:
+            self.assertIsNone(c.execute('SELECT schema_name FROM information_schema.schemata WHERE schema_name=%s',
+                                       ('process_log_user_'+self.absent,)).fetchone())
 
     def test_wrong_key_rejected_even_for_empty_pg_account(self):
         wrong = self.root / 'wrong-key'
