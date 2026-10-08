@@ -117,6 +117,62 @@
             ><strong id="project-label">全部记录</strong>
           </div>
           <div class="topbar-actions">
+            <details class="view-menu" data-view-menu>
+              <summary aria-label="视图设置">视图</summary>
+              <div class="view-menu-panel">
+                <div class="view-section">
+                  <strong>列表密度</strong>
+                  <div class="view-options">
+                    <label
+                      ><input
+                        type="radio"
+                        name="view-density"
+                        data-view="density"
+                        value="comfortable"
+                      />舒适</label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="view-density"
+                        data-view="density"
+                        value="compact"
+                      />紧凑</label
+                    >
+                  </div>
+                </div>
+                <div class="view-section">
+                  <strong>阅读字号</strong>
+                  <div class="view-options">
+                    <label
+                      ><input
+                        type="radio"
+                        name="view-text"
+                        data-view="textSize"
+                        value="small"
+                      />小</label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="view-text"
+                        data-view="textSize"
+                        value="normal"
+                      />标准</label
+                    >
+                    <label
+                      ><input
+                        type="radio"
+                        name="view-text"
+                        data-view="textSize"
+                        value="large"
+                      />大</label
+                    >
+                  </div>
+                </div>
+                <p>仅在此浏览器记忆，不影响导出。</p>
+              </div>
+            </details>
             <span id="today" class="today"></span
             ><button
               class="button small focus-control"
@@ -155,9 +211,16 @@
               ><input
                 id="search"
                 type="search"
-                placeholder="搜索内容、参数或标签"
+                placeholder="搜索笔记、内容或标签"
                 aria-label="搜索记录"
-              />
+              /><button
+                class="search-shortcut"
+                data-action="search-focus"
+                title="搜索笔记（Ctrl+K）"
+                aria-label="搜索笔记（Ctrl+K）"
+              >
+                Ctrl K
+              </button>
             </div>
             <div class="filter-row">
               <select id="status-filter" aria-label="按状态筛选">
@@ -171,7 +234,10 @@
               </select>
             </div>
             <div class="list-caption">
-              <span>笔记本</span><span id="record-count">0 条</span>
+              <span>笔记本</span
+              ><span id="record-count" role="status" aria-live="polite"
+                >0 条</span
+              >
             </div>
             <div id="records" class="record-list">
               <p class="muted padded">正在读取记录…</p>

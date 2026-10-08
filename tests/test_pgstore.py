@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from contextlib import contextmanager
+from unittest.mock import patch
 from store import Store, Conflict
 
 @unittest.skipUnless(os.environ.get('PROCESS_LOG_TEST_DATABASE_URL'), 'requires isolated PostgreSQL test database')
@@ -32,6 +34,29 @@ class PostgreSQLTests(unittest.TestCase):
             other.update_record(saved['id'], {'version':2, 'title':'bad', 'cells':[cell,cell]})
         self.assertEqual(other.get_record(saved['id']), saved)
         self.assertFalse((self.root/'process.db').exists())
+
+    def test_state_batches_related_data_with_postgresql_rows(self):
+        records = [self.r] + [self.s.create_record({'project_id': self.p['id'], 'title': f'笔记 {i}'}) for i in range(5)]
+        self.s.add_entry(records[0]['id'], {'kind': '问题', 'body': '第一段\n第二段'})
+        self.s.add_attachment(records[-1]['id'], '数据.csv', b'A,B\n1,2', 'text/csv')
+        expected = {r['id']: self.s.get_record(r['id']) for r in records}
+        queries = []
+        original_connection = self.s.connection
+
+        class TracedConnection:
+            def __init__(self, connection): self.connection = connection
+            def execute(self, query, parameters=None):
+                queries.append(query)
+                return self.connection.execute(query, parameters)
+
+        @contextmanager
+        def traced_connection():
+            with original_connection() as connection:
+                yield TracedConnection(connection)
+
+        with patch.object(self.s, 'connection', traced_connection): actual = self.s.state()
+        self.assertEqual({r['id']: r for r in actual['records']}, expected)
+        self.assertEqual(len(queries), 7)
 
     def test_two_store_instances_reject_lost_update(self):
         other=self.factory(self.root,self.dsn)

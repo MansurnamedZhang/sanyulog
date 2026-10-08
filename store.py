@@ -195,13 +195,18 @@ class Store:
             raise ValueError(f'{label}不能为空，且不能超过 {limit} 字符')
         return value.strip() if trim else value
 
-    def record_dict(self, c, row):
+    def record_dict(self, c, row, related=None):
         d = dict(row)
         d['params'], d['tags'] = json.loads(d['params']), json.loads(d['tags'])
-        d['entries'] = [dict(r) for r in c.execute('SELECT * FROM entries WHERE record_id=? ORDER BY created, rowid', (d['id'],))]
-        d['attachments'] = [dict(r) for r in c.execute('SELECT * FROM attachments WHERE record_id=? ORDER BY created, rowid', (d['id'],))]
-        notebook = c.execute('SELECT cells FROM notebooks WHERE record_id=?', (d['id'],)).fetchone()
-        d['cells'] = json.loads(notebook[0]) if notebook else []
+        if related is None:
+            d['entries'] = [dict(r) for r in c.execute('SELECT * FROM entries WHERE record_id=? ORDER BY created, rowid', (d['id'],))]
+            d['attachments'] = [dict(r) for r in c.execute('SELECT * FROM attachments WHERE record_id=? ORDER BY created, rowid', (d['id'],))]
+            notebook = c.execute('SELECT cells FROM notebooks WHERE record_id=?', (d['id'],)).fetchone()
+            d['cells'] = json.loads(notebook[0]) if notebook else []
+        else:
+            d['entries'] = related['entries'].get(d['id'], [])
+            d['attachments'] = related['attachments'].get(d['id'], [])
+            d['cells'] = related['notebooks'].get(d['id'], [])
         return d
 
     def workspace_data(self, c):
@@ -249,9 +254,19 @@ class Store:
 
     def state(self):
         with self.connection() as c:
+            if isinstance(c, sqlite3.Connection):
+                # Keep notebook bodies and record versions in the same read
+                # snapshot, including when another service shares this DB.
+                c.execute('BEGIN')
             spaces = self.workspace_data(c)
+            related = {'entries': {}, 'attachments': {}, 'notebooks': {}}
+            for table in ('entries', 'attachments'):
+                for row in c.execute('SELECT * FROM '+table+' ORDER BY created, rowid'):
+                    related[table].setdefault(row['record_id'], []).append(dict(row))
+            for row in c.execute('SELECT record_id,cells FROM notebooks'):
+                related['notebooks'][row['record_id']] = json.loads(row['cells'])
             return {'workspaces': spaces['items'], 'projects': [dict(r) | {'workspace_id': spaces['projects'].get(r['id'], 'default')} for r in c.execute('SELECT * FROM projects ORDER BY created')],
-                    'records': [self.record_dict(c, r) for r in c.execute('SELECT * FROM records ORDER BY updated DESC, rowid DESC')],
+                    'records': [self.record_dict(c, r, related) for r in c.execute('SELECT * FROM records ORDER BY updated DESC, rowid DESC')],
                     'templates': json.loads(c.execute("SELECT value FROM settings WHERE key='templates'").fetchone()[0])}
 
     def get_record(self, record_id):

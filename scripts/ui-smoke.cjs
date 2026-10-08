@@ -46,6 +46,13 @@ const assert = require("node:assert/strict");
     const page = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
     });
+    const openFirstNote = async () => {
+      const firstRecord = page.locator("[data-action=select]").first();
+      await firstRecord.waitFor({ state: "attached" });
+      if (!(await firstRecord.isVisible()))
+        await page.locator('[data-action="back-list"]').click();
+      await firstRecord.click();
+    };
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("http://127.0.0.1:" + port);
@@ -77,7 +84,7 @@ const assert = require("node:assert/strict");
     await page.reload();
     await page.locator(".workspace").waitFor();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     await page.locator(".nb-title").waitFor();
     // Simulate a page left open across the multi-account upgrade.
     await page.route("**/api/state", async (route) => {
@@ -94,12 +101,131 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator("#reauth-form").count(), 0);
     await page.unroute("**/api/state");
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     await page.locator(".nb-title").waitFor();
+    const rememberedTitle = await page.locator(".nb-title").inputValue();
+    const initialCard = await page
+      .locator(".record-card.active")
+      .elementHandle();
+    assert.equal(await page.locator("[data-view-menu]").count(), 1);
+    await page.locator("[data-view-menu] > summary").click();
+    await page.getByText("紧凑", { exact: true }).click();
+    await page.getByText("大", { exact: true }).click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-density"),
+      "compact",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-text-size"),
+      "large",
+    );
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+k");
+    assert(
+      await page
+        .locator("#search")
+        .evaluate((e) => e === document.activeElement),
+    );
+    await page.locator("#search").fill(rememberedTitle + " 质量");
+    await page.waitForFunction(
+      () => document.querySelectorAll(".record-card").length === 1,
+    );
+    assert(
+      await initialCard.evaluate((e) => e.isConnected),
+      "Search retains matching card nodes",
+    );
+    await page.locator("#search").fill("没有匹配的关键词");
+    await page.locator(".library-empty").waitFor();
+    await page.locator("#search").fill("");
+    await page.waitForFunction(
+      () => document.querySelectorAll(".record-card").length === 4,
+    );
+    await page.reload();
+    await page.locator(".nb-title").waitFor();
+    assert.equal(
+      await page.locator(".nb-title").inputValue(),
+      rememberedTitle,
+      "Reload restores the last notebook",
+    );
+    assert.equal(
+      await page.locator("body").getAttribute("data-text-size"),
+      "large",
+    );
+    await page.locator("[data-view-menu] > summary").click();
+    await page.getByText("舒适", { exact: true }).click();
+    await page.getByText("标准", { exact: true }).click();
+    await page.keyboard.press("Escape");
     const firstDraftCell = page.locator(".nb-cell").first();
     const draftArea = firstDraftCell.locator("[data-source]");
     if (!(await draftArea.isVisible()))
       await firstDraftCell.locator('[data-nb="toggle"]').click();
+    const beforeResize = await draftArea.inputValue();
+    await draftArea.fill(
+      beforeResize + "\n\n" + "切换屏幕后长段文字仍需完整显示。".repeat(100),
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => {
+      const area = document.querySelector(".nb-cell [data-source]");
+      return area && area.scrollHeight <= area.clientHeight + 2;
+    });
+    const normalSourceHeight = (await draftArea.boundingBox()).height;
+    await page.locator('[data-action="back-list"]').click();
+    await page.locator("[data-view-menu] > summary").click();
+    await page.getByText("小", { exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.locator(".record-card.active").click();
+    assert(
+      (await draftArea.boundingBox()).height <= normalSourceHeight + 2,
+      "Changing reading size while the editor is hidden cannot inflate source height",
+    );
+    assert.equal(
+      await draftArea.evaluate((area) => getComputedStyle(area).fontSize),
+      "14px",
+    );
+    await page.locator("[data-view-menu] > summary").click();
+    await page.getByText("标准", { exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await draftArea.fill(beforeResize);
+    let releaseSave;
+    let saveStarted;
+    const heldSave = new Promise((resolve) => {
+      releaseSave = resolve;
+    });
+    const savingStarted = new Promise((resolve) => {
+      saveStarted = resolve;
+    });
+    await page.route("**/api/records/*", async (route) => {
+      if (route.request().method() === "PUT") {
+        saveStarted();
+        await heldSave;
+      }
+      await route.continue();
+    });
+    try {
+      await draftArea.fill(
+        (await draftArea.inputValue()) + "\n\n本地操作不等待网络保存",
+      );
+      await savingStarted;
+      await page.locator("[data-action=focus-mode]").click();
+      assert(
+        await page
+          .locator("body")
+          .evaluate((body) => body.classList.contains("focus-mode")),
+        "Focus mode responds while a save is in flight",
+      );
+      await page.locator("[data-action=focus-mode]").click();
+      assert(
+        await draftArea.evaluate(
+          (e) => e === document.activeElement || e.isConnected,
+        ),
+        "Local view actions retain the editor",
+      );
+    } finally {
+      releaseSave();
+      await page.locator('[data-save-status][data-state="saved"]').waitFor();
+      await page.unroute("**/api/records/*");
+    }
     const beforeExpiry = await draftArea.inputValue();
     await page.request.post("http://127.0.0.1:" + port + "/api/auth/logout", {
       data: {},
@@ -215,8 +341,68 @@ const assert = require("node:assert/strict");
         ),
         `Overflow ${width}`,
       );
+      assert(
+        await page
+          .locator(".nb-cell")
+          .first()
+          .evaluate((cell) => {
+            const bounds = cell.getBoundingClientRect();
+            return [...cell.querySelectorAll(".nb-cell-actions button")].every(
+              (button) => {
+                const rect = button.getBoundingClientRect();
+                return rect.left >= bounds.left && rect.right <= bounds.right;
+              },
+            );
+          }),
+        `Cell actions remain inside their card at ${width}`,
+      );
       if (width === 2560 && process.env.UI_WIDE_CAPTURE)
         await page.screenshot({ path: process.env.UI_WIDE_CAPTURE });
+      if (width === 2560 && process.env.UI_WORKBENCH_DESIGN_HTML) {
+        const css = fs.readFileSync("static/style.css", "utf8");
+        const logo =
+          "data:image/png;base64," +
+          fs
+            .readFileSync("static/brand/process-log-logo.png")
+            .toString("base64");
+        const markup = (
+          await page.locator(".workspace").evaluate((e) => e.outerHTML)
+        )
+          .replaceAll("/brand/process-log-logo.png", logo)
+          .replace(
+            'class="brand" href="/"',
+            'id="brand-home" class="brand" href="#home"',
+          );
+        fs.writeFileSync(
+          process.env.UI_WORKBENCH_DESIGN_HTML,
+          `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>过程簿 · 编辑工作台</title><script src="https://cdn.tailwindcss.com"></script><style>${css}</style></head><body>${markup}</body></html>`,
+        );
+      }
+      if (width === 320) {
+        await page.locator("[data-view-menu] > summary").click();
+        const viewBounds = await page.locator(".view-menu-panel").boundingBox();
+        assert(viewBounds.x >= 0 && viewBounds.x + viewBounds.width <= 320);
+        await page.getByText("大", { exact: true }).click();
+        const clippedSources = await page
+          .locator("[data-source]")
+          .evaluateAll(
+            (areas) =>
+              areas.filter(
+                (area) =>
+                  area.offsetParent !== null &&
+                  area.scrollHeight > area.clientHeight + 2,
+              ).length,
+          );
+        assert.equal(
+          clippedSources,
+          0,
+          "Reading size and viewport changes remeasure source editors",
+        );
+        if (process.env.UI_VIEW_CAPTURE)
+          await page.screenshot({ path: process.env.UI_VIEW_CAPTURE });
+        await page.getByText("标准", { exact: true }).click();
+        await page.keyboard.press("Escape");
+      }
     }
     await page.setViewportSize({ width: 2560, height: 1440 });
     await page.locator("[data-action=focus-mode]").click();
@@ -375,7 +561,7 @@ const assert = require("node:assert/strict");
     await formula.locator('[type="submit"]').click();
     assert.equal((await richSaved).status(), 200);
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     await rich.locator("math").first().waitFor();
     assert(
       (await richCell.innerText()).includes("第三段"),
@@ -518,7 +704,7 @@ const assert = require("node:assert/strict");
     await diagramDialog.locator('[type="submit"]').click();
     assert.equal((await diagramSaved).status(), 200);
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     await page.waitForFunction(() =>
       document
         .querySelector(".nb-mermaid-editor img")
@@ -614,7 +800,7 @@ const assert = require("node:assert/strict");
     await page.locator(".record-pane").waitFor({ state: "visible" });
     assert(await page.locator(".record-pane").isVisible());
     assert(await page.locator("#detail").isHidden());
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     await page.locator("[data-action=navigation]").click();
     await page.locator(".sidebar").waitFor({ state: "visible" });
     assert(await page.locator(".sidebar").isVisible());
@@ -626,7 +812,7 @@ const assert = require("node:assert/strict");
     assert(await page.locator(".sidebar").isHidden());
     await page.locator("[data-action=navigation]").click();
     await page.locator("#workspace-select").selectOption("default");
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     const grid = page.locator(".nb-data-grid").first();
     await grid.scrollIntoViewIfNeeded();
     assert((await grid.boundingBox()).width < 390);
@@ -667,7 +853,7 @@ const assert = require("node:assert/strict");
     );
     assert.equal((await gridSaved).status(), 200);
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.equal(
       await page.locator('[data-grid-row="1"][data-grid-col="3"]').inputValue(),
       expectedGridText,
@@ -878,7 +1064,7 @@ const assert = require("node:assert/strict");
     await singleColumnSaved;
     await page.locator('[data-save-status][data-state="saved"]').waitFor();
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.match(
       await page.locator(`[data-cell="${singleColumnId}"]`).innerText(),
       /3 行 × 1 列/,
@@ -981,7 +1167,7 @@ const assert = require("node:assert/strict");
     ]);
     await page.locator('[data-save-status][data-state="saved"]').waitFor();
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.match(await singleColumn.innerText(), /5 行 × 4 列/);
     assert.equal(await field(3, 3).inputValue(), copiedParagraphs);
     assert(await singleColumn.locator('[data-nb="grid-copy"]').isDisabled());
@@ -1223,7 +1409,7 @@ const assert = require("node:assert/strict");
     await page.locator('[data-save-status][data-state="saved"]').waitFor();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.match(await singleColumn.innerText(), /69 行 × 1 列/);
     assert.equal(await field(1, 0).inputValue(), "备注 2");
 
@@ -1242,13 +1428,13 @@ const assert = require("node:assert/strict");
     assert.equal(await field(0, 0).inputValue(), "备注");
     await page.locator('[data-save-status][data-state="saved"]').waitFor();
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.match(await singleColumn.innerText(), /0 行 × 1 列/);
     await singleColumn.locator('[data-nb="grid-add-row"]').click();
     await field(1, 0).fill("批量删除后\n仍可继续编辑");
     await page.locator('[data-save-status][data-state="saved"]').waitFor();
     await page.reload();
-    await page.locator("[data-action=select]").first().click();
+    await openFirstNote();
     assert.match(await singleColumn.innerText(), /1 行 × 1 列/);
     assert.equal(await field(1, 0).inputValue(), "批量删除后\n仍可继续编辑");
 
@@ -1256,6 +1442,10 @@ const assert = require("node:assert/strict");
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator("[data-view-menu] > summary").click();
+    await page.getByText("紧凑", { exact: true }).click();
+    await page.getByText("大", { exact: true }).click();
+    await page.keyboard.press("Escape");
     await page.locator('[data-action="manage-accounts"]').click();
     const createAccount = page.locator("[data-create-account]");
     await createAccount.locator('[name="username"]').fill("ui-alice");
@@ -1285,6 +1475,15 @@ const assert = require("node:assert/strict");
       assert.equal(stateResponse.status(), 200);
       const aliceState = await stateResponse.json();
       await alicePage.locator(".workspace").waitFor();
+      assert.equal(
+        await alicePage.locator("body").getAttribute("data-density"),
+        "comfortable",
+        "Reading preferences are account scoped",
+      );
+      assert.equal(
+        await alicePage.locator("body").getAttribute("data-text-size"),
+        "normal",
+      );
       assert.equal(aliceState.records.length, 0);
       assert.equal(aliceState.projects.length, 0);
       assert(
@@ -1337,7 +1536,7 @@ const assert = require("node:assert/strict");
     );
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 8 viewport widths; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math/Mermaid editing, export and save/reload; no JS page errors.",
+      "PASS: multi-account creation/isolation/disable; login, persistent session, expired-session draft recovery, password change and logout; 8 viewport widths; indexed search, keyed list updates, remembered notebook/reading preferences, slow-save local actions; focus mode; menus; Markdown selection, lists and manual modes; mobile navigation; workspace switch; table overflow; visual Markdown/table/math/Mermaid editing, export and save/reload; no JS page errors.",
     );
   } finally {
     if (browser) await browser.close();

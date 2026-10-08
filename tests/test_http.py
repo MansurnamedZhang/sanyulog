@@ -104,7 +104,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(response.status, 400)
 
     def test_notebook_update_roundtrip_and_module_content_types(self):
-        for path in ['/notebook.js', '/notebook-core.mjs', '/notebook-export.mjs', '/vendor/katex.mjs']:
+        for path in ['/notebook.js', '/notebook-core.mjs', '/notebook-export.mjs', '/library.mjs', '/vendor/katex.mjs']:
             with self.request(path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn('javascript', response.headers['Content-Type'])

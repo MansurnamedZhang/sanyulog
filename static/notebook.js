@@ -120,11 +120,19 @@ export class Notebook {
     this.gridResizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = entry.contentRect.width;
-        if (width <= 0 || this.gridWidths.get(entry.target) === width) continue;
+        if (width <= 0) {
+          this.gridWidths.delete(entry.target);
+          continue;
+        }
+        if (this.gridWidths.get(entry.target) === width) continue;
         this.gridWidths.set(entry.target, width);
         requestAnimationFrame(() => {
           if (this.controller.signal.aborted || !entry.target.isConnected)
             return;
+          if (entry.target === this.root) {
+            this.refreshLayout();
+            return;
+          }
           for (const row of $$("tr", entry.target)) this.fitGridRow(row);
         });
       }
@@ -202,6 +210,15 @@ export class Notebook {
     if (this.uploading) throw new Error("附件正在保存，请稍候");
     await this.queue.flush();
   }
+  refreshLayout() {
+    if (this.root.getBoundingClientRect().width <= 0) {
+      this.gridWidths.delete(this.root);
+      return;
+    }
+    const top = this.root.scrollTop;
+    for (const area of $$("[data-source]", this.root)) this.grow(area);
+    this.root.scrollTop = top;
+  }
   dispose() {
     this.gridResizeObserver.disconnect();
     for (const editor of this.richEditors.values()) editor.destroy();
@@ -232,7 +249,7 @@ export class Notebook {
     this.root.classList.add("notebook-detail");
     this.root.innerHTML = `<div class="nb-header"><div class="nb-caption">过程笔记</div><div class="detail-actions"><button class="button small" data-action="export">导出笔记</button><button class="button small" data-nb="export-notebook-pdf">整页 PDF</button><details class="note-menu"><summary>更多操作</summary><div class="note-menu-panel"><button data-action="duplicate">复制笔记</button><button data-action="compare">对比记录</button><button class="danger" data-action="delete-record">删除笔记</button></div></details></div></div>
       <input class="nb-title" data-meta="title" maxlength="300" aria-label="笔记本标题" value="${esc(d.title)}" placeholder="未命名笔记本">
-      <div class="nb-subtitle"><span data-save-status data-state="saved">已保存</span><span data-cell-count>${d.cells.length} 个单元格</span></div>
+      <div class="nb-subtitle"><span data-save-status data-state="saved" role="status" aria-live="polite">已保存</span><span data-cell-count>${d.cells.length} 个单元格</span></div>
       <div class="nb-error" data-save-error hidden><span data-error-message></span><div><button class="button small" data-nb="save">重试保存</button><button class="button small" data-nb="download-draft">下载草稿</button><button class="button small" data-nb="reload">载入已保存内容</button></div></div>
       <details class="nb-properties"><summary>笔记属性 <span>状态 · 标签 · 实验配置</span></summary><div class="nb-property-body"><div class="record-fields"><label class="field">状态<select data-meta="status">${["进行中", "已完成", "受阻", "已搁置"].map((s) => `<option ${d.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label><label class="field">标签<input data-meta="tags" value="${esc(d.tags.join("，"))}" placeholder="用逗号分隔"></label></div><label class="field">目标<textarea data-meta="goal">${esc(d.goal)}</textarea></label><div class="section-heading"><h3>参数与配置</h3><button class="text-button" data-nb="add-param">＋ 添加参数</button></div><div class="param-table" data-params>${this.paramRows(d.params)}</div><div class="nb-review">${[
         ["result", "结果"],
@@ -282,6 +299,7 @@ export class Notebook {
       this.queue.data.cells.length + " 个单元格";
     for (const area of $$("[data-source]", this.root)) this.grow(area);
     for (const grid of $$(".nb-data-grid", this.root)) this.layoutGrid(grid);
+    this.gridResizeObserver.observe(this.root);
     this.mountRichEditors(focusId);
     if (focusId) {
       this.setActive(focusId);
@@ -357,7 +375,7 @@ export class Notebook {
   cellHTML(cell, index) {
     const editing = this.editing.has(cell.id) || cell.type !== "markdown";
     const preview = cell.type === "markdown" && !editing;
-    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""} ${cell.type === "table" ? "nb-cell-table" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><select data-cell-type aria-label="单元格类型">${Object.entries(
+    return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""} ${cell.type === "table" ? "nb-cell-table" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><span class="nb-cell-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><select data-cell-type aria-label="单元格类型">${Object.entries(
       labels,
     )
       .map(
@@ -366,7 +384,7 @@ export class Notebook {
       )
       .join(
         "",
-      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}">${preview ? "切换到源码" : "切换到所见即所得"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
+      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}"><span class="nb-toggle-prefix">切换到</span>${preview ? "源码" : "所见即所得"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
       <div class="nb-cell-files">${this.filesHTML(cell.attachment_ids)}</div>${cell.type === "file" ? '<button class="nb-upload" data-nb="cell-file">＋ 上传图片或文件 <span>也可以直接粘贴截图 · 单个最大 25 MB</span></button>' : ""}</div></article>`;
   }
   tableRows(cell) {

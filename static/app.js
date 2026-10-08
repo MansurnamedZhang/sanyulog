@@ -2,6 +2,7 @@ import { manageAccounts } from "./accounts-ui.js";
 import { changePassword, notifyLogout, accountKey } from "./auth-ui.js";
 import { newId } from "./notebook-core.mjs";
 import { Notebook } from "./notebook.js";
+import { RecordSearch, RecordList, normalizeView } from "./library.mjs";
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (value) =>
@@ -12,15 +13,10 @@ const esc = (value) =>
         c
       ],
   );
-const fmt = (value, full = false) =>
-  new Date(value).toLocaleString(
-    "zh-CN",
-    full
-      ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
-      : { month: "2-digit", day: "2-digit" },
-  );
-const statusClass = (s) =>
-  ({ 已完成: "done", 受阻: "blocked", 已搁置: "paused" })[s] || "";
+const searchIndex = new RecordSearch();
+const recordList = new RecordList($("#records"));
+let searchTimer;
+let view = normalizeView(readLocal("process-log:view"));
 let state = { projects: [], records: [], templates: [] };
 let workspace = readLocal("process-log:workspace") || "default";
 let project = "",
@@ -61,6 +57,12 @@ function writeLocal(key, value) {
     toast("浏览器草稿空间不可用，请及时点击保存。", true);
   }
 }
+function applyView() {
+  document.body.dataset.density = view.density;
+  document.body.dataset.textSize = view.textSize;
+  for (const control of $$("[data-view]"))
+    control.checked = control.value === view[control.dataset.view];
+}
 function toast(message, error = false) {
   clearTimeout(toastTimer);
   $("#toast").textContent = message;
@@ -99,6 +101,11 @@ async function refresh(detail = true) {
   state.records = state.records.filter((r) => projectIds.has(r.project_id));
   if (project && !state.projects.some((p) => p.id === project)) project = "";
   if (selected && !current()) selected = "";
+  if (!selected) {
+    const previous = readLocal("process-log:last-record:" + workspace);
+    if (state.records.some((record) => record.id === previous))
+      selected = previous;
+  }
   renderNav();
   renderList();
   if (detail) renderDetail();
@@ -159,48 +166,32 @@ function filtered() {
       (!project || r.project_id === project) &&
       (!status || r.status === status) &&
       (!tagFilter || r.tags.includes(tagFilter)) &&
-      (!q ||
-        JSON.stringify([
-          r.title,
-          r.goal,
-          r.params,
-          r.tags,
-          r.result,
-          r.conclusion,
-          r.next_step,
-          r.cells,
-          r.attachments.map((a) => a.name),
-        ])
-          .toLocaleLowerCase()
-          .includes(q)),
+      searchIndex.matches(r, q),
   );
 }
 function renderList() {
+  clearTimeout(searchTimer);
   const records = filtered();
   $("#record-count").textContent = records.length + " 条";
-  $("#records").innerHTML = records.length
-    ? records
-        .map(
-          (r) =>
-            `<button class="record-card ${r.id === selected ? "active" : ""}" data-action="select" data-id="${r.id}" aria-pressed="${r.id === selected}"><div class="card-top"><span class="status ${statusClass(r.status)}">${esc(r.status)}</span><time>${fmt(r.updated)}</time></div><h3>${esc(r.title)}</h3><p class="card-excerpt">${esc(
-              (
-                r.cells?.find((c) => c.source.trim())?.source ||
-                r.goal ||
-                "空白笔记本，从一个单元格开始。"
-              )
-                .replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+\.\s+)/gm, "")
-                .replace(/[*`]/g, "")
-                .replace(/\s+/g, " "),
-            )}</p><div class="card-bottom"><span>${r.tags.length ? "# " + esc(r.tags.slice(0, 2).join(" · ")) : esc(state.projects.find((p) => p.id === r.project_id)?.name || "")}</span><span>${r.cells?.length || 0} 个单元</span></div></button>`,
-        )
-        .join("")
-    : `<div class="padded"><p class="muted">${state.records.length ? "没有匹配的记录。试试其他关键词或筛选条件。" : "记录会按最近更新时间排列在这里。"}</p></div>`;
+  recordList.render(
+    records,
+    selected,
+    state.projects,
+    state.records.length
+      ? "没有匹配的笔记，试试其他关键词或筛选条件。"
+      : "还没有笔记，点击上方新建开始记录。",
+  );
 }
 function selectRecord(id) {
   document.body.classList.add("reading-note");
   document.body.classList.remove("navigation-open");
   document.body.classList.add("has-note");
+  if (selected === id && notebook) {
+    notebook.refreshLayout();
+    return;
+  }
   selected = id;
+  writeLocal("process-log:last-record:" + workspace, id);
   dirty = false;
   tab = "timeline";
   renderList();
@@ -221,6 +212,7 @@ function renderDetail() {
       `<div class="empty"><div class="empty-glyph">[ ]</div><span class="eyebrow">一本持续生长的过程笔记</span><h2>${state.records.length ? "选择笔记本，接着往下写" : "从一个想法，开始记录"}</h2><p>文字、代码、日志和图片，按你的思路排列。<br>随时追加一个单元格，继续上一次的探索。</p><button class="button primary" data-action="new-record">＋ 新建笔记本</button></div>`;
     return;
   }
+  document.body.classList.add("reading-note", "has-note");
   notebook = new Notebook({
     root: $("#detail"),
     record: r,
@@ -267,10 +259,17 @@ function renderDetail() {
       return result;
     },
     onSaved: (r) => {
+      const previous = state.records.find((old) => old.id === r.id);
       state.records = state.records
         .map((old) => (old.id === r.id ? r : old))
         .sort((a, b) => b.updated.localeCompare(a.updated));
-      renderNav();
+      if (
+        !previous ||
+        previous.status !== r.status ||
+        previous.project_id !== r.project_id ||
+        JSON.stringify(previous.tags) !== JSON.stringify(r.tags)
+      )
+        renderNav();
       renderList();
     },
     toast,
@@ -415,6 +414,17 @@ async function download(path) {
 }
 async function act(action, el) {
   switch (action) {
+    case "search-focus":
+      document.body.classList.remove(
+        "reading-note",
+        "focus-mode",
+        "navigation-open",
+      );
+      $("[data-action=focus-mode]").textContent = "专注模式";
+      $("[data-action=focus-mode]").setAttribute("aria-pressed", "false");
+      $("#search").focus();
+      $("#search").select();
+      return;
     case "focus-mode":
       document.body.classList.toggle("focus-mode");
       el.setAttribute(
@@ -578,11 +588,26 @@ async function act(action, el) {
   }
 }
 document.addEventListener("click", async (event) => {
-  document.querySelectorAll(".note-menu[open]").forEach((menu) => {
-    if (!menu.contains(event.target)) menu.open = false;
-  });
+  document
+    .querySelectorAll(".note-menu[open], .view-menu[open]")
+    .forEach((menu) => {
+      if (!menu.contains(event.target)) menu.open = false;
+    });
   const el = event.target.closest("[data-action]");
   if (!el) return;
+  if (
+    [
+      "focus-mode",
+      "navigation",
+      "close-navigation",
+      "back-list",
+      "search-focus",
+    ].includes(el.dataset.action) ||
+    (el.dataset.action === "select" && el.dataset.id === selected && notebook)
+  ) {
+    await act(el.dataset.action, el);
+    return;
+  }
   if (busy) return toast("正在保存，请稍候");
   busy = true;
   try {
@@ -603,9 +628,25 @@ document.addEventListener("click", async (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  if (event.target.id === "search" && !event.isComposing) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderList, 120);
+  }
+});
+document.addEventListener("compositionend", (event) => {
   if (event.target.id === "search") renderList();
 });
 document.addEventListener("change", async (event) => {
+  if (event.target.matches("[data-view]")) {
+    view = normalizeView({
+      ...view,
+      [event.target.dataset.view]: event.target.value,
+    });
+    writeLocal("process-log:view", view);
+    applyView();
+    notebook?.refreshLayout();
+    return;
+  }
   if (event.target.id === "workspace-select") {
     const next = event.target.value;
     if (busy) {
@@ -623,7 +664,7 @@ document.addEventListener("change", async (event) => {
       $("#status-filter").value = "";
       $("#tag-filter").value = "";
       await refresh();
-      document.body.classList.remove("navigation-open", "reading-note");
+      document.body.classList.remove("navigation-open");
     } catch (e) {
       event.target.value = workspace;
       toast(e.message, true);
@@ -713,9 +754,17 @@ document.addEventListener("submit", async (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === "k" &&
+    !$("#modal").open
+  ) {
+    event.preventDefault();
+    act("search-focus");
+  }
   if (event.key === "Escape") {
     document
-      .querySelectorAll(".note-menu[open]")
+      .querySelectorAll(".note-menu[open], .view-menu[open]")
       .forEach((menu) => (menu.open = false));
     document.body.classList.remove("navigation-open");
     $("[data-action=navigation]").setAttribute("aria-expanded", "false");
@@ -774,6 +823,7 @@ $("#today").textContent = new Date().toLocaleDateString("zh-CN", {
 window.addEventListener("auth-restored", () => {
   if (!notebook) refresh().catch((e) => toast(e.message, true));
 });
+applyView();
 refresh().catch((e) => {
   toast(e.message, true);
   $("#detail").innerHTML =

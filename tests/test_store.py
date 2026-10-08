@@ -4,6 +4,9 @@ import sqlite3
 import tempfile
 import unittest
 import zipfile
+from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,6 +32,62 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(state['records'][0]['params'], {'lr': '0.0001'})
         self.assertEqual(self.s.search('显存')[0]['id'], r['id'])
         self.assertEqual(self.s.search('基线')[0]['id'], r['id'])
+
+    def test_state_batches_related_data_without_queries_per_record(self):
+        records = [self.record() for _ in range(12)]
+        self.s.add_entry(records[0]['id'], {'kind': '问题', 'body': '第一段\n第二段'})
+        self.s.add_attachment(records[-1]['id'], '数据.csv', b'A,B\n1,2', 'text/csv')
+        expected = {r['id']: self.s.get_record(r['id']) for r in records}
+        queries = []
+        original_connection = self.s.connection
+
+        @contextmanager
+        def traced_connection():
+            with original_connection() as connection:
+                connection.set_trace_callback(queries.append)
+                yield connection
+
+        with patch.object(self.s, 'connection', traced_connection):
+            actual = self.s.state()
+        self.assertEqual({r['id']: r for r in actual['records']}, expected)
+        selects = [query for query in queries if query.lstrip().upper().startswith('SELECT')]
+        self.assertLessEqual(len(selects), 7, 'State queries should not grow with record count')
+
+    def test_state_keeps_body_and_version_consistent_during_another_store_write(self):
+        from store import Store, Conflict
+        record = self.record()
+        old_cell = {'id': 'a'*32, 'type': 'markdown', 'source': 'old body', 'language': '', 'attachment_ids': []}
+        before = self.s.update_record(record['id'], {'version': record['version'], 'cells': [old_cell]})
+        other = Store(self.root)
+        committed = Event()
+        original_connection = self.s.connection
+        futures = []
+
+        def write():
+            result = other.update_record(record['id'], {'version': before['version'], 'cells': [old_cell | {'source': 'new body'}]})
+            committed.set()
+            return result
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def interleave(query):
+                if query.startswith('SELECT * FROM records') and not futures:
+                    futures.append(pool.submit(write))
+                    committed.wait(.3)
+
+            @contextmanager
+            def traced_connection():
+                with original_connection() as connection:
+                    connection.set_trace_callback(interleave)
+                    yield connection
+
+            with patch.object(self.s, 'connection', traced_connection):
+                snapshot = self.s.state()['records'][0]
+            after = futures[0].result(timeout=5)
+        self.assertIn((snapshot['version'], snapshot['cells'][0]['source']), [
+            (before['version'], 'old body'), (after['version'], 'new body')])
+        if snapshot['version'] == before['version']:
+            with self.assertRaises(Conflict): self.s.update_record(record['id'], {'version': snapshot['version'], 'cells': snapshot['cells'], 'title': 'edited title'})
+        self.assertEqual(other.get_record(record['id'])['cells'][0]['source'], 'new body')
 
     def test_edit_conflict_and_copy_link(self):
         from store import Conflict
