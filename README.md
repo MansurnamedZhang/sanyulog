@@ -1,6 +1,8 @@
-# 过程簿 · Process Log
+# 三余记 · Sanyu Notes
 
-个人使用的本地过程记录工具。适合 LoRA 训练、工作流调试、软件排错和日常研究。中文界面，支持多账号独立空间、管理员创建账号、7 天免重复登录和服务器加密保存。默认使用 SQLite，也支持 PostgreSQL。运行前需安装 requirements.txt 中的依赖。
+记下过程，沉淀思考。三余记（原「过程簿」）是一个本地过程记录工具，适合 LoRA 训练、工作流调试、软件排错和日常研究。中文界面，支持多账号独立空间、管理员创建账号、7 天免重复登录和服务器加密保存。默认使用 SQLite，也支持 PostgreSQL。运行前需安装 requirements.txt 中的依赖。
+
+名称、图标与可复用资源见 [品牌说明](docs/brand.md)。
 
 Cloudflare 部署路线、现有依赖及全托管迁移要求：见 [Cloudflare 部署可行性与迁移方案](docs/cloudflare-deployment.md)。
 

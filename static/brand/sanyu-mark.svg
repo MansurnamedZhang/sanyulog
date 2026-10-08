@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">三余记 · Sanyu Notes</title>
+  <desc id="desc">深绿底上的三叠纸页，连续的书写轨迹延伸至金色圆点。</desc>
+  <defs>
+    <linearGradient id="pine" x1="28" y1="12" x2="225" y2="248" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3E6B57"/>
+      <stop offset="0.55" stop-color="#254F42"/>
+      <stop offset="1" stop-color="#183C34"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="74" y1="69" x2="180" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFCF2"/>
+      <stop offset="1" stop-color="#ECEFDC"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#pine)"/>
+  <rect x="1" y="1" width="254" height="254" rx="57" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="2"/>
+  <path d="m76 57 65-12c12-2 22 5 24 17l22 122c2 12-5 22-17 24l-65 12c-12 2-22-5-24-17L59 81c-2-12 5-22 17-24Z" fill="#92B69A" fill-opacity="0.44"/>
+  <path d="m95 49 65 9c12 2 20 12 18 24l-17 123c-2 12-12 20-24 18l-65-9c-12-2-20-12-18-24L71 67c2-12 12-20 24-18Z" fill="#BBD0AE" fill-opacity="0.62"/>
+  <path d="M86 67h60l36 36v82c0 12-8 20-20 20H86c-12 0-20-8-20-20V87c0-12 8-20 20-20Z" fill="url(#paper)"/>
+  <path d="M146 67v20c0 10 6 16 16 16h20l-36-36Z" fill="#CAD7B9"/>
+  <path d="M91 116h43c10 0 16 6 16 14s-6 14-16 14h-24c-10 0-16 6-16 14s6 14 16 14h40" stroke="#315746" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="150" cy="172" r="7" fill="#C69F5A"/>
+</svg>

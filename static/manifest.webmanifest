@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "三余记 · Sanyu Notes",
+  "short_name": "三余记",
+  "description": "记下过程，沉淀思考。用文字、代码、表格和图片持续记录每次探索。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#254F42",
+  "background_color": "#F7F9F7",
+  "icons": [
+    {
+      "src": "/brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

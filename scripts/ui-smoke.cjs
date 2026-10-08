@@ -56,6 +56,32 @@ const assert = require("node:assert/strict");
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("http://127.0.0.1:" + port);
+    assert.equal(await page.title(), "登录 · 三余记");
+    await page.locator(".auth-logo").evaluate((img) => img.decode());
+    const manifestResponse = await page.request.get(
+      new URL("/manifest.webmanifest", page.url()).href,
+    );
+    assert.equal(manifestResponse.status(), 200);
+    assert.match(
+      manifestResponse.headers()["content-type"],
+      /application\/manifest\+json/,
+    );
+    const manifest = await manifestResponse.json();
+    assert.equal(manifest.name, "三余记 · Sanyu Notes");
+    for (const icon of manifest.icons) {
+      const dimensions = await page.evaluate(async (src) => {
+        const img = new Image();
+        img.src = src;
+        await img.decode();
+        return `${img.naturalWidth}x${img.naturalHeight}`;
+      }, icon.src);
+      assert.equal(dimensions, icon.sizes);
+    }
+    const favicon = await page.request.get(
+      new URL("/favicon.ico", page.url()).href,
+    );
+    assert.equal(favicon.status(), 200);
+    assert.match(favicon.headers()["content-type"], /image\/x-icon/);
     assert.equal(
       (
         await page.request.get("http://127.0.0.1:" + port + "/api/state")
@@ -76,6 +102,9 @@ const assert = require("node:assert/strict");
       await page.screenshot({ path: process.env.UI_AUTH_CAPTURE });
     await page.locator("#login-form button").click();
     await page.locator(".workspace").waitFor();
+    assert.equal(await page.title(), "三余记 · Sanyu Notes");
+    assert.match(await page.locator(".brand").innerText(), /三余记/);
+    await page.locator(".brand-mark").evaluate((img) => img.decode());
     const sessionCookie = (await page.context().cookies()).find(
       (c) => c.name === "process_log_session",
     );
@@ -361,21 +390,19 @@ const assert = require("node:assert/strict");
       if (width === 2560 && process.env.UI_WORKBENCH_DESIGN_HTML) {
         const css = fs.readFileSync("static/style.css", "utf8");
         const logo =
-          "data:image/png;base64," +
-          fs
-            .readFileSync("static/brand/process-log-logo.png")
-            .toString("base64");
+          "data:image/svg+xml;base64," +
+          fs.readFileSync("static/brand/sanyu-mark.svg").toString("base64");
         const markup = (
           await page.locator(".workspace").evaluate((e) => e.outerHTML)
         )
-          .replaceAll("/brand/process-log-logo.png", logo)
+          .replaceAll("/brand/sanyu-mark.svg", logo)
           .replace(
             'class="brand" href="/"',
             'id="brand-home" class="brand" href="#home"',
           );
         fs.writeFileSync(
           process.env.UI_WORKBENCH_DESIGN_HTML,
-          `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>过程簿 · 编辑工作台</title><script src="https://cdn.tailwindcss.com"></script><style>${css}</style></head><body>${markup}</body></html>`,
+          `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>三余记 · 编辑工作台</title><script src="https://cdn.tailwindcss.com"></script><style>${css}</style></head><body>${markup}</body></html>`,
         );
       }
       if (width === 320) {

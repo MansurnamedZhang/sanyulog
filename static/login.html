@@ -3,23 +3,34 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>登录 · 过程簿</title>
-    <link rel="icon" href="/brand/process-log-logo.png" />
+    <meta name="theme-color" content="#254f42" />
+    <meta name="description" content="三余记：记下过程，沉淀思考。" />
+    <title>登录 · 三余记</title>
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 64x64" />
+    <link rel="icon" type="image/svg+xml" href="/brand/sanyu-mark.svg" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/login.css" />
     <script type="module" src="/auth-ui.js"></script>
   </head>
   <body class="auth-page">
     <main class="auth-card">
-      <img
-        class="auth-logo"
-        src="/brand/process-log-logo.png"
-        width="60"
-        height="60"
-        alt=""
-      />
-      <p class="auth-eyebrow">PROCESS LOG</p>
-      <h1>回到你的记录</h1>
-      <p class="auth-description">登录过程簿，继续每一次探索。</p>
+      <div class="auth-brand">
+        <img
+          class="auth-logo"
+          src="/brand/sanyu-mark.svg"
+          width="64"
+          height="64"
+          alt=""
+        />
+        <div>
+          <p class="auth-eyebrow">SANYU NOTES</p>
+          <h1>三余记</h1>
+        </div>
+      </div>
+      <p class="auth-description">
+        记下过程，沉淀思考。<br />登录，继续每一次探索。
+      </p>
       <form id="login-form">
         <label
           >账号<input

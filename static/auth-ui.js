@@ -15,7 +15,7 @@ function lock(message = "登录已过期，请重新登录后继续编辑。") {
     loginDialog = document.createElement("dialog");
     loginDialog.className = "auth-dialog";
     loginDialog.innerHTML =
-      '<h2>登录过程簿</h2><p class="auth-description"></p><form id="reauth-form"><label>账号<input name="username" autocomplete="username" maxlength="64" required></label><label>密码<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><p class="auth-error" role="alert"></p><button type="submit">登录并继续</button><p class="auth-hint" data-session-hint></p></form>';
+      '<h2>登录三余记</h2><p class="auth-description"></p><form id="reauth-form"><label>账号<input name="username" autocomplete="username" maxlength="64" required></label><label>密码<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label><p class="auth-error" role="alert"></p><button type="submit">登录并继续</button><p class="auth-hint" data-session-hint></p></form>';
     loginDialog.addEventListener("cancel", (event) => event.preventDefault());
     document.body.append(loginDialog);
     bindLogin(loginDialog.querySelector("form"), false);

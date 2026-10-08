@@ -398,7 +398,7 @@ async function download(path) {
   a.href = url;
   a.download =
     path === "/backup"
-      ? "过程簿备份-" +
+      ? "三余记备份-" +
         new Date().toISOString().slice(0, 10) +
         (response.headers.get("Content-Type")?.includes("application/zip")
           ? ".zip"
@@ -531,7 +531,7 @@ async function act(action, el) {
     case "restore":
       modal(
         "从备份恢复",
-        `<p class="muted">恢复只替换当前账号的项目、记录和模板，不影响其他账号。工具会先检查备份，并自动保存一份恢复前的完整备份。</p><p class="modal-info">支持过程簿 ZIP 和加密备份 .plbackup，解压后不超过 250 MB。加密备份须在配置相同密钥的服务器恢复。未保存的草稿不包含在备份中，请先保存。</p><div class="modal-footer"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="pick-restore">选择备份文件</button></div>`,
+        `<p class="muted">恢复只替换当前账号的项目、记录和模板，不影响其他账号。工具会先检查备份，并自动保存一份恢复前的完整备份。</p><p class="modal-info">支持三余记及旧版过程簿 ZIP 和加密备份 .plbackup，解压后不超过 250 MB。加密备份须在配置相同密钥的服务器恢复。未保存的草稿不包含在备份中，请先保存。</p><div class="modal-footer"><button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="pick-restore">选择备份文件</button></div>`,
       );
       return;
     case "pick-restore":

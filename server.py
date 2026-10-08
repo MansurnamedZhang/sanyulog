@@ -145,10 +145,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'ok': True}, cookie=self.session_cookie())
             if method == 'GET':
                 static = {'/vendor/rich-editor.js': 'vendor/rich-editor.js', '/vendor/mermaid-runtime.js': 'vendor/mermaid-runtime.js', '/mermaid-renderer.js': 'mermaid-renderer.js', '/mermaid-source.mjs': 'mermaid-source.mjs', '/notebook-export.mjs': 'notebook-export.mjs', '/accounts-ui.js': 'accounts-ui.js', '/auth-ui.js': 'auth-ui.js', '/login.css': 'login.css', '/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/library.mjs': 'library.mjs', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
+                static.update({
+                    '/favicon.ico': 'brand/favicon.ico',
+                    '/manifest.webmanifest': 'manifest.webmanifest',
+                    **{f'/brand/{name}': f'brand/{name}' for name in (
+                        'sanyu-mark.svg', 'sanyu-16.png', 'sanyu-32.png', 'sanyu-64.png',
+                        'apple-touch-icon.png', 'icon-192.png', 'icon-512.png')},
+                })
                 if path in static:
                     file = BASE / 'static' / static[path]
-                    content_type = 'text/javascript' if file.suffix in ['.js', '.mjs'] else (mimetypes.guess_type(file)[0] or 'application/octet-stream')
-                    return self.send(file.read_bytes(), content_type+'; charset=utf-8')
+                    content_type = {'.js': 'text/javascript', '.mjs': 'text/javascript',
+                                    '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+                                    '.webmanifest': 'application/manifest+json'}.get(file.suffix)
+                    content_type = content_type or mimetypes.guess_type(file)[0] or 'application/octet-stream'
+                    if content_type.startswith('text/') or file.suffix in ('.svg', '.webmanifest'):
+                        content_type += '; charset=utf-8'
+                    return self.send(file.read_bytes(), content_type)
                 if path == '/api/health':
                     with s.connection() as connection:
                         connection.execute('SELECT 1').fetchone()

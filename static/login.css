@@ -38,7 +38,21 @@
 .auth-logo {
   display: block;
   object-fit: contain;
-  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.auth-brand .auth-eyebrow {
+  margin: 0;
+}
+.auth-card .auth-brand h1 {
+  margin: 2px 0 0;
+  font-size: 30px;
+  letter-spacing: 0.08em;
 }
 .auth-eyebrow {
   font-size: 11px;
