@@ -163,7 +163,8 @@ def copy_file(source,target):
     return {'path':str(target.relative_to(pathlib.Path(BACKUP))),'kind':'file','bytes':total,'sha256':digest.hexdigest()}
 def copy_tree(source,dest):
     safe(source,True); newdir(dest)
-    for root,dirs,files in os.walk(source,followlinks=False):
+    def unreadable(error): raise RuntimeError('tree_unreadable')
+    for root,dirs,files in os.walk(source,followlinks=False,onerror=unreadable):
         current=pathlib.Path(root); safe(current,True)
         rel=current.relative_to(source)
         for name in sorted(dirs):

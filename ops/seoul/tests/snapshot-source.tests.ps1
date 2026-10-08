@@ -84,4 +84,25 @@ try {
         ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'unsafe_test_cleanup' }
     Remove-Item -LiteralPath $item.FullName -Recurse -ErrorAction Stop
 }
+$source=Get-Content -LiteralPath $sut -Raw
+$block=[regex]::Match($source,'(?s)\$py=@''\r?\n(.*?)\r?\n''@')
+Assert-True $block.Success 'remote Python block missing'
+$harness=@'
+import ast,json,pathlib,sys,types
+source=sys.stdin.read(); tree=ast.parse(source)
+function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='copy_tree')
+compiled=compile(ast.Module(body=[function],type_ignores=[]),'<remote-copy-tree>','exec')
+class Walk:
+    def walk(self,path,**kwargs):
+        if kwargs.get('onerror') is not None:
+            kwargs['onerror'](PermissionError('unreadable child'))
+        return iter(())
+namespace={'os':Walk(),'pathlib':pathlib,'safe':lambda *a:None,'newdir':lambda *a:None}
+exec(compiled,namespace)
+try: namespace['copy_tree'](pathlib.Path('/fixture'),pathlib.Path('/dest'))
+except (PermissionError,RuntimeError): print('PASS remote walker rejects unreadable child')
+else: raise AssertionError('unreadable child silently omitted')
+'@
+$walkResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $harness
+Assert-True ($LASTEXITCODE -eq 0 -and $walkResult -eq 'PASS remote walker rejects unreadable child') 'remote tree walk accepted skipped subtree'
 Write-Host 'GREEN: snapshot manifest and transfer gates passed (local fixtures; no network).'
