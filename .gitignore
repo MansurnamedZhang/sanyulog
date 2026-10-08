@@ -46,3 +46,8 @@ Thumbs.db
 secrets/
 *.key
 *.plbackup
+
+# Sanyu Seoul read-only preflight evidence and runtime secrets only
+/ops/seoul/evidence/
+/ops/seoul/runtime/
+/ops/seoul/secrets/
