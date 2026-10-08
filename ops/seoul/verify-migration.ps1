@@ -8,6 +8,9 @@ function Test-SanyuMigrationHash($value) {
 function Test-SanyuMigrationCount($value) {
     return (($value -is [int] -or $value -is [long]) -and $value -ge 0)
 }
+function Test-SanyuMigrationTrue($value) {
+    return ($value -is [bool] -and $value -eq $true)
+}
 function Get-SanyuMigrationAccountId($entry) {
     if ($entry -isnot [Collections.IDictionary]) { return $null }
     $id=$entry['storageId']
@@ -19,9 +22,9 @@ function Get-SanyuMigrationSide {
     param($Side,[string]$Role,[Collections.Generic.List[string]]$Errors)
     if ($Side -isnot [Collections.IDictionary]) { $Errors.Add("${Role}_missing");return $null }
     if ($Role -eq 'source') {
-        if ($Side['host'] -cne '172.16.240.13' -or $Side['sourceStopped'] -cne $true -or $Side['snapshotComplete'] -cne $true) { $Errors.Add('source_identity_or_snapshot') }
+        if ($Side['host'] -cne '172.16.240.13' -or -not (Test-SanyuMigrationTrue $Side['sourceStopped']) -or -not (Test-SanyuMigrationTrue $Side['snapshotComplete'])) { $Errors.Add('source_identity_or_snapshot') }
     } else {
-        if ($Side['host'] -cne '43.131.245.43' -or -not (Test-SanyuMigrationCount $Side['postgresMajor']) -or $Side['postgresMajor'] -ne 18 -or $Side['restoreComplete'] -cne $true) { $Errors.Add('target_identity_or_restore') }
+        if ($Side['host'] -cne '43.131.245.43' -or -not (Test-SanyuMigrationCount $Side['postgresMajor']) -or $Side['postgresMajor'] -ne 18 -or -not (Test-SanyuMigrationTrue $Side['restoreComplete'])) { $Errors.Add('target_identity_or_restore') }
     }
     foreach ($field in @('snapshotManifestSha256','authDbSha256','storageKeySha256','accountRowsSha256','sessionRowsSha256')) {
         if (-not (Test-SanyuMigrationHash $Side[$field])) { $Errors.Add("${Role}_${field}_invalid") }
@@ -39,6 +42,8 @@ function Get-SanyuMigrationSide {
     }
     if (-not $accounts.ContainsKey('owner')) { $Errors.Add("${Role}_owner_missing") }
     $schemas=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $approvedTables=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @('projects','records','entries','attachments','settings','notebooks')) { [void]$approvedTables.Add($name) }
     $attachmentRows=0L
     foreach ($schemaEntry in $Side['database']) {
         if ($schemaEntry -isnot [Collections.IDictionary] -or $schemaEntry['schema'] -isnot [string] -or -not $schemaExpected.Contains($schemaEntry['schema']) -or $schemaEntry['tables'] -isnot [array]) { $Errors.Add("${Role}_schema_invalid");continue }
@@ -46,10 +51,11 @@ function Get-SanyuMigrationSide {
         $hasAttachments=$false
         foreach ($table in $schemaEntry['tables']) {
             if ($table -isnot [Collections.IDictionary] -or $table['name'] -isnot [string] -or $table['name'] -cnotmatch '^[a-z][a-z0-9_]{0,62}$' -or -not (Test-SanyuMigrationCount $table['rows']) -or -not (Test-SanyuMigrationHash $table['normalizedSha256'])) { $Errors.Add("${Role}_table_invalid");continue }
+            if (-not $approvedTables.Contains($table['name'])) { $Errors.Add("${Role}_table_unapproved");continue }
             if (-not $tables.TryAdd($table['name'],"$($table['name'])|$($table['rows'])|$($table['normalizedSha256'])")) { $Errors.Add("${Role}_table_duplicate") }
             if ($table['name'] -ceq 'attachments') { $hasAttachments=$true;$attachmentRows+=$table['rows'] }
         }
-        if (-not $hasAttachments -or $tables.Count -eq 0 -or -not $schemas.TryAdd($schemaEntry['schema'],"$($schemaEntry['schema'])|$([string]::Join(';',@($tables.Values | Sort-Object -CaseSensitive)))")) { $Errors.Add("${Role}_schema_incomplete") }
+        if (-not $hasAttachments -or $tables.Count -ne $approvedTables.Count -or -not $schemas.TryAdd($schemaEntry['schema'],"$($schemaEntry['schema'])|$([string]::Join(';',@($tables.Values | Sort-Object -CaseSensitive)))")) { $Errors.Add("${Role}_schema_incomplete") }
     }
     if ($schemas.Count -ne $schemaExpected.Count) { $Errors.Add("${Role}_schema_count") }
     $media=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
@@ -70,7 +76,7 @@ function Get-SanyuMigrationSide {
 function Test-SanyuMigrationEvidence {
     param([Collections.IDictionary]$Evidence)
     $errors=[Collections.Generic.List[string]]::new()
-    if ($null -eq $Evidence -or -not (Test-SanyuMigrationCount $Evidence['schemaVersion']) -or $Evidence['schemaVersion'] -ne 1 -or $Evidence['complete'] -cne $true) { $errors.Add('evidence_incomplete') }
+    if ($null -eq $Evidence -or -not (Test-SanyuMigrationCount $Evidence['schemaVersion']) -or $Evidence['schemaVersion'] -ne 1 -or -not (Test-SanyuMigrationTrue $Evidence['complete'])) { $errors.Add('evidence_incomplete') }
     $source=Get-SanyuMigrationSide $Evidence['source'] 'source' $errors
     $target=Get-SanyuMigrationSide $Evidence['target'] 'target' $errors
     if ($source -and $target) {
@@ -83,8 +89,8 @@ function Test-SanyuMigrationEvidence {
     }
     $r2=$Evidence['r2']
     if ($r2 -isnot [Collections.IDictionary] -or $r2['accountId'] -cne '0910a2f37a347c249c2dce42169b9b65' -or
-        $r2['bucket'] -cne 'sanyulog-media' -or $r2['listComplete'] -cne $true -or
-        $r2['publicDomainsDisabled'] -cne $true -or -not (Test-SanyuMigrationCount $r2['anonymousExistingObjectStatus']) -or $r2['anonymousExistingObjectStatus'] -ne 403 -or $r2['objects'] -isnot [array]) {
+        $r2['bucket'] -cne 'sanyulog-media' -or -not (Test-SanyuMigrationTrue $r2['listComplete']) -or
+        -not (Test-SanyuMigrationTrue $r2['publicDomainsDisabled']) -or -not (Test-SanyuMigrationCount $r2['anonymousExistingObjectStatus']) -or $r2['anonymousExistingObjectStatus'] -ne 403 -or $r2['objects'] -isnot [array]) {
         $errors.Add('r2_identity_privacy_or_inventory');
     } elseif ($source) {
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

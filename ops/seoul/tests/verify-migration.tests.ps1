@@ -12,7 +12,14 @@ function Fixture {
         snapshotManifestSha256=$a; authDbSha256=$b; storageKeySha256=$c
         accountRowsSha256=$d; sessionRowsSha256=$e; sessionCount=2
         accounts=@(@{storageId='owner';enabled=$true;initialized=$true},@{storageId=$id;enabled=$false;initialized=$false})
-        database=@(@{schema='public';tables=@(@{name='projects';rows=2;normalizedSha256=$f},@{name='attachments';rows=1;normalizedSha256=$a})})
+        database=@(@{schema='public';tables=@(
+            @{name='projects';rows=2;normalizedSha256=$f},
+            @{name='records';rows=0;normalizedSha256=$e},
+            @{name='entries';rows=0;normalizedSha256=$d},
+            @{name='attachments';rows=1;normalizedSha256=$a},
+            @{name='settings';rows=0;normalizedSha256=$c},
+            @{name='notebooks';rows=0;normalizedSha256=$b}
+        )})
         media=@(@{storageId='owner';key="v1/owner/$a";plaintextSha256=$a;plaintextBytes=4;ciphertextSha256=$b;ciphertextBytes=40;references=1})
     }
     $target=ConvertFrom-Json -AsHashtable (ConvertTo-Json -Depth 15 $source)
@@ -36,11 +43,15 @@ $valid=Test-SanyuMigrationEvidence (Fixture)
 Assert $valid.ok 'valid complete evidence rejected'
 Assert ($valid.evidenceOnly -and -not $valid.liveBytesVerified -and -not $valid.cutoverAuthorized) 'comparison falsely claimed live proof'
 Reject 'source writable' {param($f) $f.source.sourceStopped=$false}
+Reject 'sourceStopped numeric one' {param($f) $f.source.sourceStopped=1}
 Reject 'incomplete snapshot' {param($f) $f.source.snapshotComplete=$false}
+Reject 'snapshotComplete numeric one' {param($f) $f.source.snapshotComplete=1}
 Reject 'wrong source identity' {param($f) $f.source.host='other'}
 Reject 'wrong target identity' {param($f) $f.target.host='other'}
 Reject 'string schema version' {param($f) $f.schemaVersion='1'}
+Reject 'complete numeric one' {param($f) $f.complete=1}
 Reject 'wrong PG major' {param($f) $f.target.postgresMajor=16}
+Reject 'restoreComplete numeric one' {param($f) $f.target.restoreComplete=1}
 Reject 'string PG major' {param($f) $f.target.postgresMajor='18'}
 Reject 'changed snapshot' {param($f) $f.target.snapshotManifestSha256='f'*64}
 Reject 'changed auth bytes' {param($f) $f.target.authDbSha256='f'*64}
@@ -54,6 +65,8 @@ Reject 'session count changed' {param($f) $f.target.sessionCount=1}
 Reject 'string session count' {param($f) $f.target.sessionCount='2'}
 Reject 'database normalized hash changed' {param($f) $f.target.database[0].tables[0].normalizedSha256='e'*64}
 Reject 'database table omitted' {param($f) $f.target.database[0].tables=@($f.target.database[0].tables[0])}
+Reject 'same approved table missing on both sides' {param($f) $f.source.database[0].tables=@($f.source.database[0].tables | Where-Object name -ne 'projects');$f.target.database[0].tables=@($f.target.database[0].tables | Where-Object name -ne 'projects')}
+Reject 'same extra table on both sides' {param($f) $extra=@{name='unexpected';rows=0;normalizedSha256='f'*64};$f.source.database[0].tables+=@($extra);$f.target.database[0].tables+=@($extra)}
 Reject 'attachment reference omitted' {param($f) $f.target.media=@()}
 Reject 'local ciphertext hash changed' {param($f) $f.target.media[0].ciphertextSha256='f'*64}
 Reject 'string ciphertext bytes' {param($f) $f.target.media[0].ciphertextBytes='40'}
@@ -63,7 +76,9 @@ Reject 'R2 HEAD hash changed' {param($f) $f.r2.objects[0].headSha256='f'*64}
 Reject 'R2 GET hash changed' {param($f) $f.r2.objects[0].getSha256='f'*64}
 Reject 'R2 GET size changed' {param($f) $f.r2.objects[0].getBytes=39}
 Reject 'R2 list incomplete' {param($f) $f.r2.listComplete=$false}
+Reject 'listComplete numeric one' {param($f) $f.r2.listComplete=1}
 Reject 'R2 public domain' {param($f) $f.r2.publicDomainsDisabled=$false}
+Reject 'publicDomainsDisabled numeric one' {param($f) $f.r2.publicDomainsDisabled=1}
 Reject 'R2 anonymous readable' {param($f) $f.r2.anonymousExistingObjectStatus=200}
 Reject 'string anonymous status' {param($f) $f.r2.anonymousExistingObjectStatus='403'}
 Reject 'wrong bucket' {param($f) $f.r2.bucket='other'}
