@@ -123,10 +123,11 @@ class CollectorFixture(unittest.TestCase):
     def test_snapshot_database_identity_is_not_inferred_from_filename(self):
         snapshot = self.root / 'snapshot'
         snapshot.mkdir()
+        for name in ('auth', 'attachments', 'state', 'config', 'secrets'):
+            (snapshot / name).mkdir()
         for relative, payload in (('db.dump', b'PGDMPfixture'), ('auth/auth.db', b'auth'),
                                   ('secrets/storage.key', bytes(range(32)))):
             path = snapshot / relative
-            path.parent.mkdir(exist_ok=True)
             path.write_bytes(payload)
         members = []
         for relative in ('db.dump', 'auth/auth.db', 'secrets/storage.key'):
@@ -135,9 +136,14 @@ class CollectorFixture(unittest.TestCase):
                                 sha256=hashlib.sha256(payload).hexdigest()))
         manifest = dict(schemaVersion=1, complete=True, sourceStopped=True,
                         databaseName='process_log', dumpDatabase='process_log', databaseUser='process_log',
-                        dumpFormat='custom', keyBytes=32, members=members)
+                        dumpFormat='custom', keyBytes=32, members=members,
+                        roots=[dict(path=name, kind='directory') for name in ('auth', 'attachments', 'state', 'config', 'secrets')])
         (snapshot / 'manifest.json').write_text(json.dumps(manifest))
         collector.validate_manifest(snapshot)
+        (snapshot / 'state').rmdir()
+        with self.assertRaises(ValueError):
+            collector.validate_manifest(snapshot)
+        (snapshot / 'state').mkdir()
         manifest['databaseName'] = 'wrong'
         (snapshot / 'manifest.json').write_text(json.dumps(manifest))
         with self.assertRaises(ValueError):
@@ -165,8 +171,12 @@ class CollectorFixture(unittest.TestCase):
 
     def test_postgres_capture_parses_six_tables_in_read_only_transaction(self):
         marker_rows = []
+        long_row = {'body': 'x' * 200}
         for name in collector.TABLES:
-            marker_rows.extend((f'BEGIN_public_{name}', 'END_SECTION'))
+            marker_rows.append(f'BEGIN_public_{name}')
+            if name == 'projects':
+                marker_rows.append(json.dumps(long_row).encode().hex())
+            marker_rows.append('END_SECTION')
         calls = []
         def fake_psql(container, user, database, script):
             calls.append(script)
@@ -180,9 +190,75 @@ class CollectorFixture(unittest.TestCase):
         with mock.patch.object(collector, 'run_psql', side_effect=fake_psql):
             rows = collector.capture_postgres('dev-postgres', 'process_log', 'process_log', {'owner'})
         self.assertEqual(set(collector.TABLES), set(rows['public']))
+        self.assertEqual(long_row, rows['public']['projects'][0])
         self.assertIn('REPEATABLE READ READ ONLY', calls[3])
         self.assertIn('"public"."attachments"', calls[3])
+        self.assertIn('COPY (SELECT line FROM (SELECT encode(', calls[3])
+        self.assertIn("'hex'", calls[3])
+        self.assertIn(') q ORDER BY line COLLATE "C") TO STDOUT;', calls[3])
         self.assertNotIn('INSERT ', calls[3])
+
+    def test_unreadable_state_subtree_cannot_be_silently_skipped(self):
+        source = self.root / 'state-source'
+        target = self.root / 'state-target'
+        (source / 'state').mkdir(parents=True)
+        (target / 'state').mkdir(parents=True)
+        real_walk = os.walk
+        def unreadable(path, *, followlinks=False, onerror=None):
+            if onerror is not None:
+                onerror(PermissionError('unreadable subtree'))
+            yield from real_walk(path, followlinks=followlinks)
+        with mock.patch.object(collector.os, 'walk', side_effect=unreadable):
+            with self.assertRaises(ValueError):
+                collector.check_restored_state(source, target)
+
+    def test_unreadable_snapshot_subtree_cannot_be_silently_skipped(self):
+        snapshot = self.root / 'snapshot-walk'
+        snapshot.mkdir()
+        for name in ('auth', 'attachments', 'state', 'config', 'secrets'):
+            (snapshot / name).mkdir()
+        for relative, payload in (('db.dump', b'PGDMPfixture'), ('auth/auth.db', b'auth'),
+                                  ('secrets/storage.key', bytes(range(32)))):
+            path = snapshot / relative
+            path.write_bytes(payload)
+        members = []
+        for relative in ('db.dump', 'auth/auth.db', 'secrets/storage.key'):
+            payload = (snapshot / relative).read_bytes()
+            members.append(dict(path=relative, kind='file', bytes=len(payload),
+                                sha256=hashlib.sha256(payload).hexdigest()))
+        manifest = dict(schemaVersion=1, complete=True, sourceStopped=True,
+                        databaseName='process_log', dumpDatabase='process_log',
+                        databaseUser='process_log', dumpFormat='custom', keyBytes=32,
+                        members=members,
+                        roots=[dict(path=name, kind='directory') for name in ('auth', 'attachments', 'state', 'config', 'secrets')])
+        (snapshot / 'manifest.json').write_text(json.dumps(manifest))
+        real_walk = os.walk
+        def unreadable(path, *, followlinks=False, onerror=None):
+            if onerror is not None:
+                onerror(PermissionError('unreadable subtree'))
+            yield from real_walk(path, followlinks=followlinks)
+        with mock.patch.object(collector.os, 'walk', side_effect=unreadable):
+            with self.assertRaises(ValueError):
+                collector.validate_manifest(snapshot)
+
+    def test_hardlinked_input_file_rejected(self):
+        alias = self.root / 'auth-alias.db'
+        try:
+            os.link(self.auth, alias)
+        except OSError:
+            self.skipTest('hardlinks unavailable')
+        with self.assertRaises(ValueError):
+            collector.collect_auth(self.auth)
+
+    def test_auth_change_between_account_discovery_and_dataset_rejected(self):
+        first = collector.collect_auth(self.auth)
+        dataset = self.evidence()
+        collector.ensure_auth_stable(first, dataset)
+        with closing(sqlite3.connect(self.auth)) as db, db:
+            db.execute('UPDATE sessions SET expires=?', (9.5,))
+        changed = self.evidence()
+        with self.assertRaises(ValueError):
+            collector.ensure_auth_stable(first, changed)
 
     def test_role_is_bound_to_actual_hostname(self):
         with mock.patch.object(collector.socket, 'gethostname', return_value='VM-0-3-ubuntu'):

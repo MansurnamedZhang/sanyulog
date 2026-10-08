@@ -7,7 +7,6 @@ never writes to PostgreSQL, auth, media or R2; its only write is an exclusive
 """
 
 import argparse
-import base64
 from contextlib import closing
 import hashlib
 import json
@@ -44,6 +43,8 @@ def require_regular(path, *, maximum=None):
             raise ValueError('unsafe_path')
         if ancestor != path and not stat.S_ISDIR(info.st_mode):
             raise ValueError('unsafe_ancestor')
+        if ancestor == path and info.st_nlink != 1:
+            raise ValueError('hardlinked_input')
     if maximum is not None and path.stat().st_size > maximum:
         raise ValueError('oversize_file')
     return path
@@ -172,6 +173,10 @@ def checked_media_tree(root, expected):
         raise ValueError('media_inventory_mismatch')
 
 
+def abort_walk(error):
+    raise ValueError('unreadable_subtree') from error
+
+
 def collect_dataset(auth_db, key_file, attachments_root, pg_rows):
     auth = collect_auth(auth_db)
     key_file = require_regular(key_file, maximum=32)
@@ -239,6 +244,15 @@ def collect_dataset(auth_db, key_file, attachments_root, pg_rows):
                 sessionCount=auth['sessionCount'], accounts=accounts, database=database, media=media)
 
 
+def ensure_auth_stable(first, dataset):
+    for field in ('authDbSha256', 'accountRowsSha256', 'sessionRowsSha256', 'sessionCount'):
+        if first[field] != dataset[field]:
+            raise ValueError('auth_changed_during_capture')
+    observed = [(item['storageId'], item['enabled']) for item in dataset['accounts']]
+    if first['accounts'] != observed:
+        raise ValueError('auth_accounts_changed_during_capture')
+
+
 def run_psql(container, user, database, script):
     command = ['docker', 'exec', '-i', container, 'psql', '-X', '-q', '-A', '-t',
                '-v', 'ON_ERROR_STOP=1', '-U', user, '-d', database]
@@ -277,7 +291,7 @@ def capture_postgres(container, user, database, account_ids):
             marker = f'BEGIN_{schema}_{table}'
             sections.append((marker, schema, table))
             sql.append(f"SELECT '{marker}';")
-            sql.append(f'''COPY (SELECT encode(convert_to(row_to_json(t)::text,'UTF8'),'base64') AS line FROM "{schema}"."{table}" t ORDER BY line COLLATE "C") TO STDOUT;''')
+            sql.append(f'''COPY (SELECT line FROM (SELECT encode(convert_to(row_to_json(t)::text,'UTF8'),'hex') AS line FROM "{schema}"."{table}" t) q ORDER BY line COLLATE "C") TO STDOUT;''')
             sql.append("SELECT 'END_SECTION';")
     sql.append('COMMIT;')
     lines = run_psql(container, user, database, '\n'.join(sql))
@@ -288,7 +302,10 @@ def capture_postgres(container, user, database, account_ids):
             raise ValueError('database_capture_incomplete')
         cursor += 1
         while cursor < len(lines) and lines[cursor] != 'END_SECTION':
-            rows[schema][table].append(json.loads(base64.b64decode(lines[cursor], validate=True)))
+            encoded = lines[cursor]
+            if not encoded or len(encoded) % 2 or not re.fullmatch('[0-9a-f]+', encoded):
+                raise ValueError('database_capture_invalid_hex')
+            rows[schema][table].append(json.loads(bytes.fromhex(encoded)))
             cursor += 1
         if cursor >= len(lines):
             raise ValueError('database_capture_incomplete')
@@ -324,15 +341,37 @@ def validate_manifest(snapshot):
             raise ValueError('snapshot_member_mismatch')
     if not {'db.dump', 'auth/auth.db', 'secrets/storage.key'}.issubset(expected):
         raise ValueError('snapshot_required_member_missing')
+    roots = data.get('roots')
+    if not isinstance(roots, list):
+        raise ValueError('snapshot_roots_missing')
+    expected_dirs = set()
+    for entry in roots:
+        relative = entry.get('path') if isinstance(entry, dict) else None
+        if (not isinstance(entry, dict) or entry.get('kind') != 'directory' or not isinstance(relative, str) or
+            not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', relative) or
+            '..' in relative.split('/') or relative in expected_dirs):
+            raise ValueError('snapshot_root_invalid')
+        expected_dirs.add(relative)
+    if not {'auth', 'attachments', 'state', 'config', 'secrets'}.issubset(expected_dirs):
+        raise ValueError('snapshot_required_root_missing')
+    for relative in expected:
+        if relative == 'manifest.json':
+            continue
+        for parent in Path(relative).parents:
+            if parent != Path('.'):
+                expected_dirs.add(parent.as_posix())
     actual = set()
-    for directory, dirs, files in os.walk(snapshot, followlinks=False):
+    actual_dirs = set()
+    for directory, dirs, files in os.walk(snapshot, followlinks=False, onerror=abort_walk):
         for name in dirs + files:
             candidate = Path(directory) / name
             if stat.S_ISLNK(candidate.lstat().st_mode):
                 raise ValueError('snapshot_symlink')
+        for name in dirs:
+            actual_dirs.add((Path(directory) / name).relative_to(snapshot).as_posix())
         for name in files:
             actual.add((Path(directory) / name).relative_to(snapshot).as_posix())
-    if actual != expected:
+    if actual != expected or actual_dirs != expected_dirs:
         raise ValueError('snapshot_extra_or_missing')
     return hashlib.sha256(content).hexdigest(), data
 
@@ -343,7 +382,7 @@ def check_restored_state(source_root, target_root):
         if not base.is_dir() or stat.S_ISLNK(base.lstat().st_mode):
             raise ValueError('state_root_invalid')
         result = {}
-        for directory, dirs, files in os.walk(base, followlinks=False):
+        for directory, dirs, files in os.walk(base, followlinks=False, onerror=abort_walk):
             for name in dirs + files:
                 child = Path(directory) / name
                 info = child.lstat()
@@ -445,6 +484,7 @@ def main(argv=None):
         rows = capture_postgres(args.db_container, args.db_user, args.db_name,
                                 {storage_id for storage_id, _ in auth['accounts']})
         dataset = collect_dataset(auth_db, key_file, attachments, rows)
+        ensure_auth_stable(auth, dataset)
         if args.role == 'target':
             member = {entry['path']: entry for entry in manifest['members']}
             if dataset['authDbSha256'] != member['auth/auth.db']['sha256'] or dataset['storageKeySha256'] != member['secrets/storage.key']['sha256']:
