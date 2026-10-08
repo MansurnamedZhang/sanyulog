@@ -70,12 +70,16 @@ PowerShell **不直接查询 Cloudflare API**，不接受 Cloudflare 凭据。�
 
 ## Task 2：配置边界与两套数据区
 
-`docker-compose.yml` 使用 JSON（YAML 1.2 子集），便于 PowerShell 原生解析语义、无需安装 YAML 模块。配置只有 `app`、`postgres` 两个服务；专用 bridge 允许应用出站访问私有 R2，不加入其它服务网络。PostgreSQL 16 不发布端口，应用只发布 `127.0.0.1:18765:8765`。服务没有全局 `container_name`；Compose 项目名前缀隔离网络和卷。
+`docker-compose.yml` 使用 JSON（YAML 1.2 子集），便于 PowerShell 原生解析语义、无需安装 YAML 模块。配置只有 `app`、`postgres` 两个服务；专用 bridge 允许应用出站访问私有 R2，不加入其它服务网络。PostgreSQL 18 不发布端口，应用只发布 `127.0.0.1:18765:8765`。服务没有全局 `container_name`；Compose 项目名前缀隔离网络和卷。
 
 | 运行用途 | `SANYU_PROJECT` | 主机根目录 | 数据库名 | 卷 / 网络 |
 | --- | --- | --- | --- | --- |
-| 纯合成联调 | `sanyulog-fixture` | `/home/ubuntu/apps/sanyulog-fixture` | `sanyulog-fixture` | `sanyulog-fixture_pgdata` / `sanyulog-fixture_private` |
-| 正式恢复 | `sanyulog` | `/home/ubuntu/apps/sanyulog` | `sanyulog` | `sanyulog_pgdata` / `sanyulog_private` |
+| 纯合成联调 | `sanyulog-fixture` | `/home/ubuntu/apps/sanyulog-fixture` | `sanyulog-fixture` | `sanyulog-fixture_pgdata18` / `sanyulog-fixture_private` |
+| 正式恢复 | `sanyulog` | `/home/ubuntu/apps/sanyulog` | `sanyulog` | `sanyulog_pgdata18` / `sanyulog_private` |
+
+2026-10-08 主任务重新只读核验源 `dev-postgres` 的 server 与 `pg_dump` 均为 18.6 后，用户明确批准**仅首尔目标**使用 PostgreSQL 18，替代原计划的 16；不升级、重启或修改源数据库。新版 `pg_dump` 的输出恢复到较旧 major 不受兼容性保证，不能把 PostgreSQL 18 dump 导入 16 当作可靠迁移路线。[PostgreSQL 官方兼容性说明](https://www.postgresql.org/docs/18/app-pgdump.html#APP-PGDUMP-NOTES)
+
+官方 PG18 镜像的默认 `PGDATA` 为 `/var/lib/postgresql/18/docker`，新专用卷 `pgdata18` 挂载到 `/var/lib/postgresql`，不覆盖默认 PGDATA，也不沿用旧 `/var/lib/postgresql/data` 挂载。[官方镜像数据目录约定](https://hub.docker.com/_/postgres/) 已有 `sanyulog-fixture_pgdata` 是 PG16 测试卷，保持原样，**不得挂入 PG18、改布局、删除或覆盖**。父控制端重新查重新卷名并记录归属后，停止仅目标 fixture 应用/数据库，用新卷重新建立合成 fixture 和验证；不导入旧 fixture 的数据到生产。生产使用独立 `sanyulog_pgdata18`，首次启动仍必须等待恢复门禁。不运行 `down -v`。新卷和旧卷不可互换；PG18 容器重建后的数据持久性也需实际验证。
 
 控制端必须限制 `SANYU_PROJECT` **只允许表中两个字面值**，不能是任意路径/用户输入；Compose 的必填插值不是枚举验证。禁止额外 `-p`、`COMPOSE_PROJECT_NAME`、覆盖文件或 `COMPOSE_FILE` 改写对应关系。每次用显式 `-f` 和唯一 env 文件；先清除控制 shell 中旧的 `SANYU_*`（非系统变量），避免 shell 优先级覆盖已核对的槽位。项目名同时决定所有绑定目录、env 文件和数据库名，不能独立拼接生产与 fixture 路径。
 
@@ -113,7 +117,7 @@ docker image inspect sanyulog:450f11d64ce8fa77f9968b870602f18d174937b8 \
 
 固定 Git context 避免从 ops HEAD 或脏工作树构建。保存构建命令、成功状态、源码 SHA、服务器新 image ID；还要以该 image ID 运行无凭据 import 检查 `import server, r2_media, r2_reconcile`。不通过 tag 名或 label 单独推定来源。基础镜像和依赖可能随时间变化，所以服务器 ID 不要求等于 CI ID；若构建失败则停止，不回退旧镜像。
 
-`SANYU_IMAGE_ID` 必须是经上述核验的 `sha256:` + 64 位小写十六进制本地 image ID；Compose `pull_policy: never` 且无 build section，启动用 `--no-build --pull never`，缺镜像就失败。保存 postgres:16-bookworm 实际 RepoDigest 和 `.Id` 作为此轮证据；当前配置固定 major 16 而非声称锁定了该标签的不可变字节。
+`SANYU_IMAGE_ID` 必须是经上述核验的 `sha256:` + 64 位小写十六进制本地 image ID；Compose `pull_policy: never` 且无 build section，启动用 `--no-build --pull never`，缺镜像就失败。保存 postgres:18-bookworm 实际 RepoDigest、`.Id`、server/pg_restore 版本作为此轮证据；当前配置固定 major 18 而非声称锁定了该标签的不可变字节。源 pg_dump 和目标 pg_restore/数据库 major 必须同为 18，目标补丁版本应不低于本次源站观测的 18.6；不满足即暂停，不回退到 PG16。既有代码 Checks 中的 PG16 测试不等于 PG18 恢复兼容性证据，首尔 PG18 fixture/恢复联调仍需实际通过。
 
 无秘密的 `runtime/compose.env`（仍 `0600`、忽略 Git）记录 `SANYU_PROJECT`、`SANYU_IMAGE_ID`、`SANYU_PROXY_IP`。`SANYU_PROXY_IP` 只能是本槽位实际 Docker bridge gateway/应用观测到的 Nginx 对端 **单个 IP**，不能放网段、通配符或 Cloudflare 客户端头。首次仅启动 postgres 以建立网络时，可临时设为 `127.0.0.1`，**此时不得启动 app**；检查 `<project>_private` 的网关和所有权后替换为实际 IP，重新 quiet 校验后才启动 app。最终以隔离请求验证代理对端与登录限速边界。
 

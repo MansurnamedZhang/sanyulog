@@ -19,6 +19,8 @@
 
 浏览器 `https://notes.896364.xyz` → Cloudflare DNS/代理 → 首尔宿主机 Nginx（TLS）→ 仅绑定 `127.0.0.1:18765` 的应用容器。应用使用专属 PostgreSQL 容器与持久卷；认证库、原始 32 字节加密密钥和附件本地镜像用独立受限挂载保存。不得复用或修改其他应用的数据库、卷、Nginx 站点或端口。
 
+2026-10-08 已批准修订：主任务重新只读核验源 `dev-postgres` server 和 `pg_dump` 都是 18.6，用户明确同意**仅首尔目标**采用 PostgreSQL 18，取代实施计划原先假设的 16，不改变源数据库。官方不保证较新 major 的 dump 可恢复到较旧 major，故目标使用 `postgres:18-bookworm`，恢复前核验同 major 的 pg_restore/数据库版本并完成实际 fixture 验证。PG18 默认数据目录 `/var/lib/postgresql/18/docker` 位于挂载点 `/var/lib/postgresql` 下，使用新的项目专属 `pgdata18` 卷；已有 PG16 测试卷保留、不复用、不删改，不作原地物理升级。[pg_dump 官方说明](https://www.postgresql.org/docs/18/app-pgdump.html#APP-PGDUMP-NOTES)、[官方镜像布局](https://hub.docker.com/_/postgres/)
+
 新建专用私有 R2 桶 `sanyulog-media`；不启用 `r2.dev` 公共开发 URL，不连接对象直出域名，不设置公共读权限或浏览器 CORS。服务器使用仅限该桶对象读写的 R2 API 凭据；凭据以受限只读文件挂载到容器，不能写进 Git、镜像、Compose 明文环境、前端、日志或聊天。若无法安全创建并交付该凭据，则停止 R2 实施并请求用户在 Cloudflare 控制台创建；不得借用其他项目的宽权限密钥。
 
 R2 对象 key 为 `v1/<storage_id>/<plaintext_sha256>`，其中 `storage_id` 由已认证会话决定，不能由浏览器指定。对象内容保持现有 `StorageCipher` 的 AES-256-GCM 密文信封，R2 Content-Type 固定为 `application/octet-stream`。数据库中的附件 ID、文件名、MIME、大小、哈希及笔记引用格式保持兼容。相同哈希在不同账号分区为不同对象；仅 R2 key 前缀不足以授权访问，所有读取都先经过应用会话、账号数据区和数据库记录校验。

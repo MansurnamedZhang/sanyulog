@@ -13,7 +13,7 @@ function Case([string]$Name, [scriptblock]$Body) {
     Write-Host "PASS $Name"
 }
 function Assert-Keys($Map, [string[]]$Expected, [string]$Message) {
-    Assert-True (($Map.Keys | Sort-Object) -join ',' -ceq ($Expected | Sort-Object) -join ',') $Message
+    Assert-True ((($Map.Keys | Sort-Object) -join ',') -ceq (($Expected | Sort-Object) -join ',')) $Message
 }
 
 # JSON is a YAML 1.2 subset: parse the actual Compose artifact without dependencies
@@ -35,8 +35,8 @@ Case 'only app and PostgreSQL share a dedicated non-external network and volume'
     Assert-Keys $compose.networks @('private') 'unexpected network'
     Assert-Keys $compose.networks.private @('driver') 'network must not be external or globally named'
     Assert-True ($compose.networks.private.driver -ceq 'bridge') 'dedicated bridge required for server R2 egress'
-    Assert-Keys $compose.volumes @('pgdata') 'unexpected volume'
-    Assert-True ($compose.volumes.pgdata.Count -eq 0) 'database volume must be project scoped'
+    Assert-Keys $compose.volumes @('pgdata18') 'PostgreSQL 18 must use a new logical volume; preserve the old pgdata volume'
+    Assert-True ($compose.volumes.pgdata18.Count -eq 0) 'database volume must be project scoped'
     foreach ($service in $compose.services.Values) {
         Assert-True (($service.networks -join ',') -ceq 'private') 'service escaped dedicated network'
         foreach ($field in @('network_mode','container_name','privileged','devices','volumes_from','extends','include','build','entrypoint','command','env_file_secret')) {
@@ -90,15 +90,15 @@ Case 'all five app mounts are explicit, preexisting and slot-contained; only sec
         Assert-True ($mount.bind.create_host_path -eq $false) 'missing files must not become directories'
     }
 }
-Case 'PostgreSQL 16 stores data in its project volume and loads password from a read-only file' {
-    Assert-True ($db.image -ceq 'postgres:16-bookworm') 'PostgreSQL major must remain 16'
+Case 'PostgreSQL 18 stores data in its project volume and loads password from a read-only file' {
+    Assert-True ($db.image -ceq 'postgres:18-bookworm') 'target PostgreSQL major must match approved source major 18'
     Assert-Keys $db.environment @('POSTGRES_USER','POSTGRES_DB','POSTGRES_PASSWORD_FILE') 'no literal password or trust authentication'
     Assert-True ($db.environment.POSTGRES_USER -ceq 'sanyulog') 'unexpected database role'
     Assert-True ($db.environment.POSTGRES_DB -ceq $projectExpression) 'fixture and restored database identities must differ'
     Assert-True ($db.environment.POSTGRES_PASSWORD_FILE -ceq '/run/secrets/postgres-password') 'file password required'
     Assert-True ($db.volumes.Count -eq 2) 'unexpected PostgreSQL mount'
     $data=$db.volumes[0]; $secret=$db.volumes[1]
-    Assert-True ($data.type -ceq 'volume' -and $data.source -ceq 'pgdata' -and $data.target -ceq '/var/lib/postgresql/data') 'database persistent storage escaped project'
+    Assert-True ($data.type -ceq 'volume' -and $data.source -ceq 'pgdata18' -and $data.target -ceq '/var/lib/postgresql') 'PostgreSQL 18 versioned PGDATA must live inside its new project volume at /var/lib/postgresql'
     Assert-True ($secret.type -ceq 'bind' -and $secret.source -ceq "/home/ubuntu/apps/$projectExpression/secrets/postgres-password" -and $secret.target -ceq '/run/secrets/postgres-password' -and $secret.read_only -eq $true -and $secret.bind.create_host_path -eq $false) 'unsafe database secret mount'
     Assert-True (($db.healthcheck.test -join ' ') -ceq 'CMD-SHELL pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"') 'healthcheck must avoid password and check selected database'
     Assert-True ($db.healthcheck.interval -ceq '10s' -and $db.healthcheck.timeout -ceq '5s' -and $db.healthcheck.retries -eq 5) 'bounded database readiness required'

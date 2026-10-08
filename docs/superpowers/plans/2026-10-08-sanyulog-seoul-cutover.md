@@ -6,7 +6,7 @@
 
 **Architecture:** 首尔新增独立 Docker 应用、PostgreSQL、受限本地 auth/附件/密钥挂载和宿主机 Nginx HTTPS；R2 只存本工具附件密文。源局域网实例先完整备份再短暂停写，迁移核对后保留但停止，避免双写。所有新资源与现有 AFFiNE、Nextcloud、Teleport、Infisical 等服务隔离。
 
-**Tech Stack:** Ubuntu 24.04、Docker Compose、PostgreSQL 16、Python 3.12 镜像、Nginx、Certbot、Cloudflare DNS/R2、SSH/SCP、SHA-256、`pg_dump` / `pg_restore`。
+**Tech Stack:** Ubuntu 24.04、Docker Compose、PostgreSQL 18、Python 3.12 镜像、Nginx、Certbot、Cloudflare DNS/R2、SSH/SCP、SHA-256、`pg_dump` / `pg_restore`。
 
 **Spec:** `docs/superpowers/specs/2026-10-08-seoul-r2-hybrid-deployment-design.md`
 
@@ -16,6 +16,7 @@
 
 - 源实例为 `172.16.240.13:8765` 的 `process-log` 容器；不要删除或覆盖其数据库、auth、附件、加密密钥、Compose 或备份。停写只可在用户确认的维护窗口进行，切换后保留源容器但默认停止。
 - 首尔目标为 `43.131.245.43`，站点 `notes.896364.xyz`；新项目根 `/home/ubuntu/apps/sanyulog`，备份根 `/home/ubuntu/backups/sanyulog`，Nginx 站点 `/etc/nginx/sites-available/notes.896364.xyz.conf`，应用只映射 `127.0.0.1:18765:8765`，PostgreSQL 不发布宿主机端口。执行前对每个路径和端口重新查重。
+- 2026-10-08 源 `dev-postgres` server 与 `pg_dump` 新鲜只读核验均为 18.6，用户明确批准只把首尔目标从原计划 PostgreSQL 16 改为 18，源数据库保持不动。新版 dump 恢复到旧 major 不受官方保证；目标使用 `postgres:18-bookworm`，新逻辑卷 `pgdata18` 挂载 `/var/lib/postgresql`，保留默认 `PGDATA=/var/lib/postgresql/18/docker`。既有 PG16 fixture 卷保留且不复用；重新验证目标 PG18 fixture、持久性、pg_restore 版本与恢复，不以原 PG16 Checks 代替。依据：[pg_dump 兼容性](https://www.postgresql.org/docs/18/app-pgdump.html#APP-PGDUMP-NOTES)、[官方镜像卷布局](https://hub.docker.com/_/postgres/)。
 - 2026-10-08 只读发现的 Cloudflare account ID 为 `0910a2f37a347c249c2dce42169b9b65`、`896364.xyz` zone ID 为 `67edc27e351abaa1eee7d945a5b0b0f8`；这只是预期身份，所有外部写入前必须重新核对。
 - 专用 R2 桶名 `sanyulog-media`；禁止 `r2.dev`、自定义对象直出域名、公共读和浏览器直连。R2 凭据仅限此桶对象读写；从受限只读文件注入，不打印或通过聊天传递值。
 - 完整迁移包括 PostgreSQL 数据库、全部账号（含停用及未建 schema 账号）、会话、auth.db、配置、原始 32 字节密钥、所有被数据库引用的本地附件及其加密格式；不把数据库/auth/密钥上传 R2。
