@@ -41,7 +41,7 @@ class R2Credentials:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, 'rb') as source:
                 info = os.fstat(source.fileno())
-                if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600
                         or info.st_uid not in (0, os.geteuid())
                         or (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino)):
                     raise ValueError('unsafe credential file')
@@ -153,6 +153,8 @@ class R2Mirror:
     def put_ciphertext(self, storage_id, digest, ciphertext, cipher) -> None:
         key = object_key(storage_id, digest)
         plaintext = self._plaintext(ciphertext, digest, cipher)
+        if len(plaintext) > 25 * 1024 * 1024:
+            raise R2Error('R2 attachment exceeds the 25 MiB plaintext limit')
         try:
             head = self._call('head_object', key)
         except R2Error as error:

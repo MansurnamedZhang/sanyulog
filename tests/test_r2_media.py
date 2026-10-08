@@ -118,6 +118,22 @@ class R2MirrorTests(unittest.TestCase):
         self.upload(replacement)
         self.assertEqual(self.mirror.get_ciphertext('owner', self.digest), self.blob)
 
+    def test_plaintext_over_25_mib_is_rejected_before_any_remote_call(self):
+        plaintext = b'x' * (25 * 1024 * 1024 + 1)
+        digest = hashlib.sha256(plaintext).hexdigest()
+        ciphertext = self.cipher.encrypt(plaintext, 'attachment:' + digest)
+        with self.assertRaises(R2Error):
+            self.mirror.put_ciphertext('owner', digest, ciphertext, self.cipher)
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.client.objects, {})
+
+    def test_plaintext_exactly_25_mib_round_trips(self):
+        plaintext = b'x' * (25 * 1024 * 1024)
+        digest = hashlib.sha256(plaintext).hexdigest()
+        ciphertext = self.cipher.encrypt(plaintext, 'attachment:' + digest)
+        self.mirror.put_ciphertext('owner', digest, ciphertext, self.cipher)
+        self.assertEqual(self.mirror.get_ciphertext('owner', digest), ciphertext)
+
     def test_existing_conflicting_content_is_never_overwritten(self):
         wrong = self.cipher.encrypt(b'wrong', 'attachment:' + self.digest)
         self.client.objects[('sanyulog-media', 'v1/owner/' + self.digest)] = (
@@ -214,6 +230,14 @@ class CredentialTests(unittest.TestCase):
             self.path.chmod(mode)
             with self.assertRaises(R2Error):
                 R2Credentials.load(self.path)
+
+    @unittest.skipUnless(os.name == 'posix', 'credential privacy requires Linux/POSIX permissions')
+    def test_permissions_other_than_exact_0600_are_rejected(self):
+        for mode in (0o700, 0o400, 0o4600, 0o2600, 0o1600):
+            with self.subTest(mode=oct(mode)):
+                self.path.chmod(mode)
+                with self.assertRaises(R2Error):
+                    R2Credentials.load(self.path)
 
     @unittest.skipUnless(os.name == 'posix', 'symlink creation and private permissions require POSIX')
     def test_symbolic_link_is_rejected(self):
