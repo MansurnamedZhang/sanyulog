@@ -122,7 +122,7 @@ import ast,pathlib,re,sys,urllib.parse
 source=sys.stdin.read();tree=ast.parse(source)
 fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='check_source_identity')
 P=pathlib.PurePosixPath
-ns={'re':re,'urllib':urllib,'DB':'app','USER':'hans','DB_CONTAINER':'dev-postgres',
+ns={'re':re,'urllib':urllib,'DB':'process_log','USER':'process_log','DB_CONTAINER':'dev-postgres',
     'COMPOSE':'/home/hans/services/process-log/compose.yaml',
     'ROOT':P('/home/hans/services/process-log'),
     'AUTH':P('/home/hans/.local/share/process-log-auth/auth.db'),
@@ -138,15 +138,17 @@ mounts=[{'Type':'bind','Source':src,'Destination':dst,'RW':rw} for src,dst,rw in
 labels={'com.docker.compose.project.config_files':'/home/hans/services/process-log/compose.yaml',
         'com.docker.compose.project.working_dir':'/home/hans/services/process-log',
         'com.docker.compose.project':'process-log','com.docker.compose.service':'app'}
-def reject(name,url='postgresql://hans:secret@dev-postgres:5432/app',m=None,l=None,common=True,owner=True):
+def reject(name,url='postgresql://process_log:secret@dev-postgres:5432/process_log',m=None,l=None,common=True,owner=True):
     try: ns['check_source_identity'](url, mounts if m is None else m, labels if l is None else l,common,owner)
     except (RuntimeError,ValueError): return
     raise AssertionError(name+' escaped')
-ns['check_source_identity']('postgresql://hans:secret@dev-postgres:5432/app',mounts,labels,True,True)
-reject('wrong host',url='postgresql://hans:secret@other-postgres:5432/app')
-reject('wrong port',url='postgresql://hans:secret@dev-postgres:5433/app')
-reject('wrong database',url='postgresql://hans:secret@dev-postgres:5432/other')
-reject('wrong user',url='postgresql://other:secret@dev-postgres:5432/app')
+ns['check_source_identity']('postgresql://process_log:secret@dev-postgres:5432/process_log',mounts,labels,True,True)
+reject('wrong host',url='postgresql://process_log:secret@other-postgres:5432/process_log')
+reject('wrong port',url='postgresql://process_log:secret@dev-postgres:5433/process_log')
+reject('container default database mistaken for app',url='postgresql://process_log:secret@dev-postgres:5432/app')
+reject('container default user mistaken for app',url='postgresql://hans:secret@dev-postgres:5432/process_log')
+reject('wrong database',url='postgresql://process_log:secret@dev-postgres:5432/other')
+reject('wrong user',url='postgresql://other:secret@dev-postgres:5432/process_log')
 reject('disjoint network',common=False)
 reject('wrong compose owner or mode',owner=False)
 bad=list(mounts);bad[0]=dict(bad[0],Source='/home/hans/other/attachments');reject('stale mount',m=bad)

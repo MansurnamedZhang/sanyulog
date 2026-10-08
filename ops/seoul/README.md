@@ -173,7 +173,7 @@ pwsh -NoProfile -File ops/seoul/tests/preflight.tests.ps1
 
 先运行 `pwsh -NoProfile -File ops/seoul/tests/snapshot-source.tests.ps1`。这些测试仅使用本地假清单/临时文件，不触碰源站。真实运行需由控制端另行确认：Task 2 HTTPS 维护入口仍返回 503、私有桶及目标 PG18 fixture 已验收；源 `process-log` 与 `dev-postgres` 的身份/挂载、应用数据库 URL 中的数据库名和用户、Compose 路径、已有备份根及两端容量再次只读核实；保留源备份和旧 PostgreSQL。源 PostgreSQL 为 **18**；不得将其 custom-format dump 直接恢复到目标 PostgreSQL 16，目标专用库必须为已核实的兼容 PG18。
 
-维护窗口由用户确认后，操作员仅停止 `process-log`（不停止 `dev-postgres` 或其它容器），再立即核对其状态为 `exited`。快照脚本本身不负责停容器，要求显式 `-MaintenanceWindowConfirmed` 和全新、不存在的 `snapshot-YYYYMMDDTHHMMSSZ` 目录；固定源账号、主机和 `StrictHostKeyChecking=yes`，拒绝密码提示。数据库名/用户必须由刚核实的容器配置确定，不从聊天、旧预检摘要或测试夹具猜测。示例中的 `app`/`hans` 仅对应 2026-10-08 只读发现，执行时复核：
+维护窗口由用户确认后，操作员仅停止 `process-log`（不停止 `dev-postgres` 或其它容器），再立即核对其状态为 `exited`。快照脚本本身不负责停容器，要求显式 `-MaintenanceWindowConfirmed` 和全新、不存在的 `snapshot-YYYYMMDDTHHMMSSZ` 目录；固定源账号、主机和 `StrictHostKeyChecking=yes`，拒绝密码提示。数据库名/用户必须由刚核实的**应用 `DATABASE_URL`**确定，不能误用 PostgreSQL 容器默认的 `POSTGRES_DB=app`、`POSTGRES_USER=hans`。2026-10-08 新鲜只读观测确认应用实际使用 `process_log`/`process_log`；执行时再次复核：
 
 ```powershell
 pwsh -NoProfile -File ops/seoul/snapshot-source.ps1 -Mode snapshot `
@@ -181,21 +181,21 @@ pwsh -NoProfile -File ops/seoul/snapshot-source.ps1 -Mode snapshot `
   -SourceIdentityFile C:\Users\hans\.ssh\id_ed25519_codex_dev_linux `
   -SourceBackupPath /home/hans/services/process-log/backups/snapshot-<UTC时间> `
   -ComposePath /home/hans/services/process-log/compose.yaml `
-  -DatabaseContainer dev-postgres -ExpectedDatabase app -ExpectedUser hans
+  -DatabaseContainer dev-postgres -ExpectedDatabase process_log -ExpectedUser process_log
 ```
 
-脚本重新确认应用停止、DB 容器运行、应用 `DATABASE_URL` 精确指向 `dev-postgres:5432/app` 且用户为 `hans`；两容器必须共享已核实的 `dev-databases_default` NetworkID，数据库端别名含 `dev-postgres`。应用四个 bind mount 的来源、目标和读写性须逐项匹配；Compose labels 的 project/service/config_files/working_dir 必须分别为 `process-log`/`app`/上述 Compose 路径/项目根，Compose 必须由 SSH 用户 UID 1000 所有且 mode `0600`。这些是此轮观察身份，漂移即中止并重新审查，不偷偷改为宽匹配。停止态容器的 `DATABASE_URL` 只能从 Docker `Config.Env` 受限投影在远端进程内解析；投影中可能含密码，不得输出、记录或转发原文。所有源路径和祖先须无符号链接，原始 `storage.key` 恰为 32 字节。以新建的 `0700` 源备份目录保存 PG18 `pg_dump -Fc`（由源 PG18 的 `pg_restore -l` 可列出）、SQLite 在线 backup API 合并后的完整 `auth.db`、整个附件树与 `state` 树、精确 Compose 和原密钥；普通文件以 `0600` 新建。源 `auth.db` 中所有账号（含停用）都参与附件引用查询，未初始化 schema 不会被创建；逐个确认 PostgreSQL 引用的密文文件存在于整树副本。清单记录每个复制文件的字节数/SHA-256、账号/会话聚合数和源容器停止态，不记录凭据或密钥正文。失败时保留部分备份供调查并尝试重启源应用；`snapshot_failed_source_may_be_down` 或 `snapshot_remote_unavailable_source_state_unknown` 必须视为源站可能仍停止，操作员立即独立核实容器健康，不能继续传输。脚本成功后源应用仍保持停止，直到迁移或人工回退决定。
+脚本重新确认应用停止、DB 容器运行、应用 `DATABASE_URL` 精确指向 `dev-postgres:5432/process_log` 且用户为 `process_log`；两容器必须共享已核实的 `dev-databases_default` NetworkID，数据库端别名含 `dev-postgres`。应用四个 bind mount 的来源、目标和读写性须逐项匹配；Compose labels 的 project/service/config_files/working_dir 必须分别为 `process-log`/`app`/上述 Compose 路径/项目根（这里的 `app` 是 **Compose 服务名**，不是数据库名），Compose 必须由 SSH 用户 UID 1000 所有且 mode `0600`。这些是此轮观察身份，漂移即中止并重新审查，不偷偷改为宽匹配。停止态容器的 `DATABASE_URL` 只能从 Docker `Config.Env` 受限投影在远端进程内解析；投影中可能含密码，不得输出、记录或转发原文。所有源路径和祖先须无符号链接，原始 `storage.key` 恰为 32 字节。以新建的 `0700` 源备份目录保存 PG18 `pg_dump -Fc`（由源 PG18 的 `pg_restore -l` 可列出）、SQLite 在线 backup API 合并后的完整 `auth.db`、整个附件树与 `state` 树、精确 Compose 和原密钥；普通文件以 `0600` 新建。源 `auth.db` 中所有账号（含停用）都参与附件引用查询，未初始化 schema 不会被创建；逐个确认 PostgreSQL 引用的密文文件存在于整树副本。清单记录每个复制文件的字节数/SHA-256、账号/会话聚合数和源容器停止态，不记录凭据或密钥正文。失败时保留部分备份供调查并尝试重启源应用；`snapshot_failed_source_may_be_down` 或 `snapshot_remote_unavailable_source_state_unknown` 必须视为源站可能仍停止，操作员立即独立核实容器健康，不能继续传输。脚本成功后源应用仍保持停止，直到迁移或人工回退决定。
 
 同机源备份是持久恢复点，不能在转运后删除。经现有 SSH/SCP 将**该一个精确备份目录**下载到当前 Windows 用户与 SYSTEM 独占的临时目录；创建前检查目标不存在、**全部祖先**不是 junction/reparse point，禁用 ACL 继承并只授予当前用户 SID 与 `S-1-5-18`（SYSTEM）完全控制。传输前后对临时根和所有文件/目录用 `Get-Acl` 核对 DACL：无继承给其他主体的有效 ACE，主体集合只含当前用户 SID 与 SYSTEM；只留脱敏主体/权限摘要作为证据。当前脚本不自动配置或验证 ACL，因此这项人工门禁不能省略。不得把备份放在 Git 工作树、公共下载目录、同步盘或聊天附件。SCP 返回码为 0 后，在受限控制端加载脚本并执行：
 
 ```powershell
 . ./ops/seoul/snapshot-source.ps1
-$manifest = Read-SanyuSnapshotManifest '<本机受限临时目录>\snapshot-<UTC时间>\manifest.json' 'app' 'hans'
+$manifest = Read-SanyuSnapshotManifest '<本机受限临时目录>\snapshot-<UTC时间>\manifest.json' 'process_log' 'process_log'
 $expectedManifestSha256 = '<源站脚本输出的64位manifestSha256>'
 if (-not (Test-SanyuCopiedFiles '<本机受限临时目录>\snapshot-<UTC时间>' $manifest $expectedManifestSha256)) { throw 'transfer_bytes_rejected' }
 ```
 
-`-Mode verify` 的输出只标记 `manifestOnly=true, bytesVerified=false`：它验证 JSON 形状，**不是**字节证据。`Test-SanyuCopiedFiles` 对清单中的**每个文件**重算长度与 SHA-256，拒绝祖先/子级 reparse point、未列出的文件、缺件和 manifest 本身摘要不符；`Test-SanyuTransferIdentity` 只比较两端清单的成员元数据，绝不能单独用作传输证明。清单目前未枚举嵌套空目录，转运时还须在源、本机、首尔各自对相对目录路径（包括空目录）做受限清单并逐项比较；缺少任一目录就停止。之后只把这一精确目录上传至首尔 `/home/ubuntu/backups/sanyulog/` 下全新的 `0700` 子目录，普通文件保持 `0600`，在首尔**再次逐项重算**并与源清单的 path/bytes/SHA-256 对比，检查 `pg_restore -l`、auth SQLite `quick_check` 与原密钥长度。不要仅凭 SCP 成功或文件数相等宣布迁移完成。控制端受限暂存只有在首尔校验通过后才可按精确路径清理；源备份长期保留。任何一步失败，保持首尔维护页，不恢复/切换目标；优先重启并检查源应用健康，再诊断。若源/目标在此后新增写入，旧清单立即失效，必须重新维护窗口获取一致快照。
+`-Mode verify` 的输出只标记 `manifestOnly=true, bytesVerified=false`：它验证 JSON 形状，**不是**字节证据。`Test-SanyuCopiedFiles` 对清单中的**每个文件**重算长度与 SHA-256，拒绝祖先/子级 reparse point、未列出的文件、缺件和 manifest 本身摘要不符；`Test-SanyuTransferIdentity` 只比较两端清单的成员元数据，绝不能单独用作传输证明。清单目前未枚举嵌套空目录，转运时还须在源、本机、首尔各自对相对目录路径（包括空目录）做受限清单并逐项比较；缺少任一目录就停止。**首尔备份根目前为 root:root 0700，ubuntu 无法直接 SCP 到其中。**只把这一精确快照目录上传到已核实归 ubuntu 的 `/home/ubuntu/apps/sanyulog/transfer/` 下全新 `0700` 子目录；先在 inbound 对每个文件和空目录做独立哈希/权限/非链接核对。然后由受控 `sudo` 将该**精确目录**移入 `/home/ubuntu/backups/sanyulog/` 下全新 root 所有的受限子目录，不放宽备份根权限；移动前再次逐层确认目标不存在、无 symlink，移动后在首尔备份位置**再次逐项重算**并与源清单的 path/bytes/SHA-256 对比，检查 `pg_restore -l`、auth SQLite `quick_check` 与原密钥长度。不要仅凭 SCP/移动成功或文件数相等宣布迁移完成。控制端受限暂存只有在首尔校验通过后才可按精确路径清理；源备份长期保留。任何一步失败，保持首尔维护页，不恢复/切换目标；优先重启并检查源应用健康，再诊断。若源/目标在此后新增写入，旧清单立即失效，必须重新维护窗口获取一致快照。
 
 当前脚本只实现源快照及本机逐字节校验函数，**不自动执行 SCP、首尔端哈希核对或生产恢复**；这些仍是操作员独立验收门禁，不能把本地 GREEN 说成 Task 3 已在生产完成。
 
@@ -217,3 +217,27 @@ pwsh -NoProfile -File ops/seoul/verify-migration.ps1 `
 `r2.accountId` 固定为本项目已核实的 Cloudflare account，`bucket=sanyulog-media`，`listComplete=true` 仅在整桶所有分页完整列出后设置。`objects` 必须与源有效媒体 key 精确一一对应，不能多出 fixture、孤儿或其它前缀对象。每对象 `headBytes` 为 HEAD 的 ContentLength、`headSha256` 为 HEAD 中 `ciphertext-sha256` 元数据；`getBytes` 和 `getSha256` 必须由**实际 GET 完整读回密文字节**独立计算，四者与源/目标本地密文一致。证据生产者还须用原始根密钥解密读回密文并独立核对明文 SHA-256/字节数；比较器本身不会拿到或读取该密钥。只有确认 managed `r2.dev` 与 custom public domain 都关闭，才设 `publicDomainsDisabled=true`；`anonymousExistingObjectStatus=403` 必须是在一个确实存在的当前对象上实测，不能用不存在 key 的 404 代替。
 
 生产恢复操作不在脚本内：先核对 PG18 服务端和 pg_restore major/隔离卷，完整恢复源 dump/auth.db/原 32 字节 key/全量本地密文，核对身份、权限与散列；运行 `r2_reconcile.py inventory` dry-run，拒绝缺失/无效本地引用；仅对明确账号逐个执行 `sync --apply --storage-id <id> --bucket sanyulog-media`，只上传数据库当前有效引用。每次操作前复核项目身份、桶和维护页仍有效，失败即停留在维护页，不删除原站或 fixture 卷。最终成功声明必须来自主执行者的生产实测证据，而非此脚本退出码。
+
+### 只读源/目标证据采集器
+
+`collect-migration-evidence.py` 只在源应用容器 `exited`、目标应用容器 `created` 或 `exited`（均未运行）时运行，且先后两次检查该容器的 Compose 身份与状态；源主机名必须为 `dev-linux`，目标为 `VM-0-3-ubuntu`。它拒绝不匹配的角色、DB 容器/用户/库名和路径。需要主机 Python 3 的 `cryptography` 包；源和目标已只读观察到该库可导入，但正式运行前仍要核实。用宿主机 `docker exec -i` 调用精确数据库容器的 `psql`，核实 PG18 身份，六表在 `REPEATABLE READ READ ONLY` 事务内读取；不使用应用构造器或 DB 写入。SQLite auth 以 `mode=ro`/`query_only` 读取，账号和会话**所有列**类型标记、确定排序后哈希；停用未初始化账号仍保留。每个有效引用均读取普通单硬链接本地密文，用原 32 字节 key/AES-GCM 验证明文摘要/大小；额外、缺失、损坏或 symlink 附件一律失败，绝不把孤儿计入 R2 成功。目标额外核对源快照 `state/` 的所有文件、空目录、字节摘要和 auth/key 哈希。
+
+以下是**调用格式**，不是本轮已运行的生产命令。先将精确脚本文件受控复制到各自服务器，核对与已审查提交的 SHA-256；确认 source snapshot 与 Seoul backup 子目录均已完成 Task 3 双端哈希核对，再创建各自 `evidence/` 目录为运行账号独占 `0700`。源仅允许 `hans` 在 `dev-linux` 运行，输出 `/home/hans/services/process-log/backups/evidence/migration-source-<UTC>.json`；首尔备份根为 root:root 0700，目标使用受控 `sudo` 运行并输出 `/home/ubuntu/backups/sanyulog/evidence/migration-target-<UTC>.json`，不改变根目录 ACL。文件必须原先不存在；脚本以 `O_EXCL`/`0600` 创建，不覆盖旧证据，stdout 只含状态、角色、证据哈希和聚合计数，异常只输出 `collector_failed`。
+
+```sh
+python3 -B collect-migration-evidence.py --role source \
+  --root /home/hans/services/process-log/backups/snapshot-<UTC> \
+  --snapshot /home/hans/services/process-log/backups/snapshot-<UTC> \
+  --db-container dev-postgres --db-user process_log --db-name process_log \
+  --app-container process-log \
+  --output /home/hans/services/process-log/backups/evidence/migration-source-<UTC>.json
+
+sudo -n python3 -B collect-migration-evidence.py --role target \
+  --root /home/ubuntu/apps/sanyulog \
+  --snapshot /home/ubuntu/backups/sanyulog/snapshot-<UTC> \
+  --db-container sanyulog-postgres-1 --db-user sanyulog --db-name sanyulog \
+  --app-container sanyulog-app-1 \
+  --output /home/ubuntu/backups/sanyulog/evidence/migration-target-<UTC>.json
+```
+
+两份证据文件含 storage ID、对象 key 和表摘要，必须按备份级别保管，不能贴在聊天或 Git。控制端从文件中只复制必要字段组成 `verify-migration.ps1` 的 `source`/`target`，并另行以 Cloudflare/S3 只读接口取得整桶全分页 R2 清单、每个有效对象的 HEAD 元数据和完整 GET 密文摘要/解密结果，再形成 `r2` 证据；**本采集器不访问 R2，也没有 R2 实测通过标志**。确认备份可恢复、无新增写入和人工验收仍是独立门禁。
