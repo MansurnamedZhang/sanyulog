@@ -2,6 +2,8 @@
 
 个人使用的本地过程记录工具。适合 LoRA 训练、工作流调试、软件排错和日常研究。中文界面，支持多账号独立空间、管理员创建账号、7 天免重复登录和服务器加密保存。默认使用 SQLite，也支持 PostgreSQL。运行前需安装 requirements.txt 中的依赖。
 
+Cloudflare 部署路线、现有依赖及全托管迁移要求：见 [Cloudflare 部署可行性与迁移方案](docs/cloudflare-deployment.md)。
+
 ## 启动
 
 首次运行先安装依赖并初始化账号；完成后可双击 `start.cmd` 启动。本机 HTTP 需按下面设置 Cookie 兼容模式，服务器推荐 HTTPS。
@@ -89,11 +91,13 @@ flowchart TD
 
 ## 保存位置与备份
 
-- `data/process.db`：SQLite 数据库，包含项目、笔记本单元格、参数、模板和附件索引。
-- `data/attachments/`：原始附件，使用内容哈希命名。
+- `data/process.db`：默认管理员数据区的 SQLite 数据库，包含项目、笔记本单元格、参数、模板和附件索引。
+- `data/auth.db`：独立账号与会话数据库，须另行备份，不包含在当前账号的笔记备份中。
+- `data/accounts/<storage_id>/`：普通账号的 SQLite 数据区及默认附件目录；PostgreSQL 模式改用独立账号 schema。
+- `data/attachments/`：附件对象，使用内容哈希命名；启用托管加密时文件内容为密文。
 - `data/backups/`：每次恢复前自动生成的完整 ZIP 快照。
 
-「完整备份」导出当前所有已保存数据和被引用的附件；「从备份恢复」验证完整性后替换现有数据，并先保存恢复前快照。备份与恢复均限制原始数据库和附件合计不超过 250 MB；超过上限时会明确拒绝，现有数据保持不变。SQLite 模式数据量较大时可在停止服务后复制整个 `data` 目录作为文件备份。PostgreSQL 模式需同时备份数据库和附件目录。应定期将备份复制到另一块磁盘。Markdown 导出包含单条记录、时间线及附件清单；原文件请通过完整备份带走。
+「当前账号备份」导出当前账号所有已保存数据和被引用的附件；「恢复当前账号」验证完整性后替换该账号数据，并先保存恢复前快照。备份与恢复均限制原始数据库和附件合计不超过 250 MB；超过上限时会明确拒绝，现有数据保持不变。整站备份还需独立保存认证库、所有账号的数据区和附件以及原始加密密钥。SQLite 模式数据量较大时可在停止服务后复制整个 `data` 目录作为文件备份。PostgreSQL 模式需同时备份全部账号 schema 和附件目录。应定期将备份复制到另一块磁盘。Markdown 导出包含单条记录、时间线及附件清单；原文件请通过当前账号备份带走。
 
 删除记录或附件会移除数据库中的引用；附件实体暂不主动清理，避免误删和恢复竞争，因此磁盘占用不会立即下降。完整备份只包含仍被引用的附件。无云同步、无训练日志自动采集，也不连接模型服务。
 
@@ -103,7 +107,7 @@ flowchart TD
 
 ```powershell
 python -m unittest discover -s tests -v
-node --test tests/notebook.test.mjs
+npm test
 npm run check
 ```
 
@@ -115,9 +119,9 @@ npm run check
 
 手动运行时先安装 `requirements.txt`，设置 `DATABASE_URL`、`PROCESS_LOG_HOST`、`PROCESS_LOG_ALLOWED_ORIGINS`（逗号分隔完整来源）及 `PROCESS_LOG_ATTACHMENTS`，然后运行 `python server.py`。局域网监听需显式配置允许来源，Host/Origin 检查继续生效。
 
-本应用没有登录认证，仅适用于可信局域网，能访问此端口的用户可读写记录。请勿直接发布到公网。代码单元不执行代码。
+正式入口默认要求登录，支持管理员创建多个独立账号和七天会话。首次部署需初始化并持久化独立认证库；公网使用 HTTPS、Secure Cookie、正确的 Host/Origin 和可信代理配置，详见 [登录系统配置](docs/authentication.md)。代码单元不执行代码。
 
-完整 ZIP 备份与 SQLite 模式互通：SQLite 文件仅作为备份交换格式。恢复会替换当前应用数据库内容，恢复前自动保存快照；大数据集请停写后配合 `pg_dump` 和附件目录做一致备份。应用 ZIP 备份仍有 250 MB 上限。
+当前账号 ZIP / 加密备份与 SQLite 模式互通：PostgreSQL 模式下 SQLite 文件仅作为备份交换格式。恢复只替换当前账号数据区，恢复前自动保存快照；大数据集请停写后配合 `pg_dump` 和全部账号附件目录做整站一致备份。应用备份仍有 250 MB 上限。
 
 PostgreSQL 测试需提供专用、可清空的 `PROCESS_LOG_TEST_DATABASE_URL`，切勿指向生产库，再运行 Python 测试命令。
 
