@@ -35,6 +35,11 @@ Assert-True $valid.ok 'valid complete stopped snapshot rejected'
 Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$true}) -ceq 'snapshot_failed_source_may_be_down') 'failed restart hidden from operator'
 Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$false}) -ceq 'snapshot_failed_source_state_verified_running') 'verified running status not distinguished'
 Assert-True ((Get-SanyuFailureCode @{}) -ceq 'snapshot_remote_unavailable_source_state_unknown') 'unknown state falsely treated as running'
+foreach ($reason in @('source_ssh_failed','snapshot_timeout','connection reset','')) {
+    Assert-True ((Get-SanyuTransportFailureCode $reason) -ceq 'snapshot_remote_unavailable_source_state_unknown') "transport failure $reason obscured source-state uncertainty"
+}
+Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_may_be_down') -ceq 'snapshot_failed_source_may_be_down') 'remote down warning lost'
+Assert-True ((Get-SanyuTransportFailureCode 'snapshot_failed_source_state_verified_running') -ceq 'snapshot_failed_source_state_verified_running') 'remote health result lost'
 $withOrphan=Fixture; $withOrphan.referencedAttachmentCount=1
 Assert-True (Test-SanyuSnapshotManifest $withOrphan -ExpectedDatabase 'process_log' -ExpectedUser 'process_log').ok 'full copied tree may contain an unreferenced ciphertext file'
 Reject 'container writable' { param($f) $f.sourceStopped=$false }

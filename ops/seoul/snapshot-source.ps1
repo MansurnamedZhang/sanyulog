@@ -22,6 +22,11 @@ function Get-SanyuFailureCode([System.Collections.IDictionary]$Reply) {
     return 'snapshot_failed_source_state_verified_running'
 }
 
+function Get-SanyuTransportFailureCode([string]$Reason) {
+    if ($Reason -cin @('snapshot_failed_source_may_be_down','snapshot_failed_source_state_verified_running')) { return $Reason }
+    return 'snapshot_remote_unavailable_source_state_unknown'
+}
+
 function Test-SanyuSnapshotManifest {
     param([System.Collections.IDictionary]$Manifest,[string]$ExpectedDatabase,[string]$ExpectedUser)
     $errors=[Collections.Generic.List[string]]::new()
@@ -335,6 +340,8 @@ except Exception:
         catch { throw 'snapshot_remote_unavailable_source_state_unknown' }
         if ($process.ExitCode -ne 0 -or $reply.ok -cne $true) { throw (Get-SanyuFailureCode $reply) }
         return $reply
+    } catch {
+        throw (Get-SanyuTransportFailureCode $_.Exception.Message)
     } finally { $process.Dispose() }
 }
 
