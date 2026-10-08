@@ -1,9 +1,10 @@
 """Transactional SQLite storage with optional server-managed encryption."""
-from storage_crypto import StorageCipher, COLUMNS
+from storage_crypto import StorageCipher, COLUMNS, MAGIC
 import hashlib
 import csv
 import io
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -58,8 +59,9 @@ SCHEMA = V1_SCHEMA + NOTEBOOK_SCHEMA
 
 
 class Store:
-    def __init__(self, root, encryption_key_file=None):
+    def __init__(self, root, encryption_key_file=None, *, media_mirror=None, storage_id='owner'):
         self.cipher = StorageCipher(encryption_key_file)
+        self.configure_media(media_mirror, storage_id)
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.files = self.root / 'attachments'
@@ -83,6 +85,14 @@ class Store:
         if migrated:
             with self.connection() as c:
                 c.execute("VACUUM")
+
+    def configure_media(self, media_mirror, storage_id):
+        from r2_media import object_key
+        object_key(storage_id, '0' * 64)
+        if media_mirror is not None and self.cipher.aes is None:
+            raise ValueError('R2 媒体镜像需要配置原始加密密钥')
+        self.media_mirror = media_mirror
+        self.storage_id = storage_id
 
     def migrate_encryption(self, c, cipher=None):
         cipher = cipher or self.cipher
@@ -401,7 +411,11 @@ class Store:
         return [r for r in self.state()['records'] if q in json.dumps(r, ensure_ascii=False).casefold()]
 
     def add_attachment(self, record_id, name, content, mime):
-        with self.lock:
+        with self.lock, self.connection() as c:
+            # Cover local writes as well as retry lookup + insertion across
+            # instances. PostgreSQL's connection already holds an advisory lock.
+            if self.media_mirror is not None and isinstance(c, sqlite3.Connection):
+                c.execute('BEGIN IMMEDIATE')
             self.get_record(record_id)
             if len(content) > 25 * 1024 * 1024:
                 raise ValueError('单个附件不能超过 25 MB')
@@ -416,16 +430,45 @@ class Store:
                     self.write_attachment_bytes(path, self.cipher.encrypt(content, 'attachment:'+filename))
             else:
                 self.write_attachment_bytes(path, self.cipher.encrypt(content, 'attachment:'+filename))
+            if self.media_mirror is not None:
+                self.media_mirror.put_ciphertext(self.storage_id, filename, path.read_bytes(), self.cipher)
             d = dict(id=uid(), record_id=record_id, name=safe_name, mime=str(mime)[:100], size=len(content), file=filename, created=now())
-            with self.connection() as c:
-                c.execute('INSERT INTO attachments VALUES (:id,:record_id,:name,:mime,:size,:file,:created)', self.cipher.mapping(d))
+            if self.media_mirror is not None:
+                for row in c.execute('SELECT * FROM attachments WHERE record_id=? AND file=? ORDER BY created,rowid', (record_id, filename)).fetchall():
+                    if row['name'] == d['name'] and row['mime'] == d['mime']:
+                        if row['size'] != len(content):
+                            raise ValueError('附件校验失败')
+                        return dict(row)
+            c.execute('INSERT INTO attachments VALUES (:id,:record_id,:name,:mime,:size,:file,:created)', self.cipher.mapping(d))
             return d
+
+    def verified_media(self, ciphertext, row):
+        # Unlike legacy migration decoding, mirrored reads require an envelope.
+        if self.cipher.aes is None or not ciphertext.startswith(MAGIC):
+            raise ValueError('附件校验失败')
+        content = self.cipher.decrypt(ciphertext, 'attachment:' + row['file'])
+        if hashlib.sha256(content).hexdigest() != row['file'] or len(content) != row['size']:
+            raise ValueError('附件校验失败')
+        return content
 
     def read_attachment(self, attachment_id):
         with self.connection() as c:
             row = c.execute('SELECT * FROM attachments WHERE id=?', (attachment_id,)).fetchone()
             if row is None:
                 raise KeyError('附件不存在')
+            if self.media_mirror is not None:
+                from r2_media import object_key
+                object_key(self.storage_id, row['file'])
+                try:
+                    ciphertext = self.media_mirror.get_ciphertext(self.storage_id, row['file'])
+                    return dict(row), self.verified_media(ciphertext, row)
+                except (ValueError, OSError):
+                    # Never expose SDK diagnostics, keys, account IDs or paths.
+                    logging.getLogger(__name__).warning('Private R2 read failed; verifying local media fallback')
+                try:
+                    return dict(row), self.verified_media((self.files / row['file']).read_bytes(), row)
+                except (ValueError, OSError):
+                    raise ValueError('附件副本不可用或校验失败') from None
             return dict(row), self.decode_attachment((self.files / row['file']).read_bytes(), row['file'])
 
     def delete_attachment(self, attachment_id):

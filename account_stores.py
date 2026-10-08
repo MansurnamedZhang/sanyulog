@@ -5,12 +5,13 @@ from pathlib import Path
 from store import Store
 
 class AccountStores:
-    def __init__(self, owner, root, database_url=None, attachments_dir=None, encryption_key_file=None):
+    def __init__(self, owner, root, database_url=None, attachments_dir=None, encryption_key_file=None, *, media_mirror=None):
         self.stores = {'owner': owner}
         self.root = Path(root).resolve()
         self.database_url = database_url
         self.attachments_dir = Path(attachments_dir).resolve() if attachments_dir else None
         self.key_file = encryption_key_file
+        self.media_mirror = media_mirror
         self.lock = threading.RLock()
 
     def get(self, principal):
@@ -23,7 +24,8 @@ class AccountStores:
                 if self.database_url:
                     from pgstore import PostgreSQLStore
                     files = self.attachments_dir / 'accounts' / key if self.attachments_dir else None
-                    self.stores[key] = PostgreSQLStore(root, self.database_url, files, self.key_file, namespace='process_log_user_'+key)
+                    self.stores[key] = PostgreSQLStore(root, self.database_url, files, self.key_file, namespace='process_log_user_'+key,
+                                                      media_mirror=self.media_mirror, storage_id=key)
                 else:
-                    self.stores[key] = Store(root, encryption_key_file=self.key_file)
+                    self.stores[key] = Store(root, encryption_key_file=self.key_file, media_mirror=self.media_mirror, storage_id=key)
             return self.stores[key]

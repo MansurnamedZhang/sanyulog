@@ -41,11 +41,12 @@ class Connection:
 
 
 class PostgreSQLStore(Store):
-    def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None, namespace=None):
+    def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None, namespace=None, *, media_mirror=None, storage_id='owner'):
         if namespace is not None and not re.fullmatch(r'process_log_user_[a-f0-9]{32}', namespace):
             raise ValueError('账号数据库命名空间无效')
         self.namespace = namespace
         self.cipher = StorageCipher(encryption_key_file)
+        self.configure_media(media_mirror, storage_id)
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.files = Path(attachments_dir).resolve() if attachments_dir else self.root / 'attachments'
