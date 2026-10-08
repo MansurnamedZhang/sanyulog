@@ -14,6 +14,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Test-SanyuInteger($Value) { return (($Value -is [int] -or $Value -is [long]) -and $Value -ge 0) }
+
+function Get-SanyuFailureCode([System.Collections.IDictionary]$Reply) {
+    if ($null -eq $Reply -or $Reply['ok'] -cne $false -or $Reply['sourceMayBeDown'] -isnot [bool]) { return 'snapshot_remote_unavailable_source_state_unknown' }
+    if ($Reply['sourceMayBeDown']) { return 'snapshot_failed_source_may_be_down' }
+    return 'snapshot_failed_source_state_verified_running'
+}
+
 function Test-SanyuSnapshotManifest {
     param([System.Collections.IDictionary]$Manifest,[string]$ExpectedDatabase,[string]$ExpectedUser)
     $errors=[Collections.Generic.List[string]]::new()
@@ -24,7 +32,7 @@ function Test-SanyuSnapshotManifest {
     }
     if ($ExpectedUser -cnotmatch '^[a-z][a-z0-9_]{0,62}$' -or $Manifest['databaseUser'] -cne $ExpectedUser) { $errors.Add('database_user') }
     if ($Manifest['dumpFormat'] -cne 'custom') { $errors.Add('dump_format') }
-    if ($Manifest['keyBytes'] -isnot [int] -or $Manifest['keyBytes'] -ne 32) { $errors.Add('key_size') }
+    if (-not (Test-SanyuInteger $Manifest['keyBytes']) -or $Manifest['keyBytes'] -ne 32) { $errors.Add('key_size') }
     if ($Manifest['members'] -isnot [array] -or $Manifest['roots'] -isnot [array]) { $errors.Add('inventory_missing') }
     $paths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($entry in @($Manifest['members'])) {
@@ -32,7 +40,7 @@ function Test-SanyuSnapshotManifest {
             $entry['path'] -isnot [string] -or $entry['path'] -cnotmatch '^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$' -or
             $entry['path'] -match '(^|/)\.\.?(?:/|$)' -or -not $paths.Add([string]$entry['path']) -or
             $entry['sha256'] -isnot [string] -or $entry['sha256'] -cnotmatch '^[a-f0-9]{64}$' -or
-            $entry['bytes'] -isnot [ValueType] -or $entry['bytes'] -lt 0) { $errors.Add('member_invalid') }
+            -not (Test-SanyuInteger $entry['bytes'])) { $errors.Add('member_invalid') }
     }
     $roots=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($entry in @($Manifest['roots'])) {
@@ -44,10 +52,10 @@ function Test-SanyuSnapshotManifest {
     foreach ($required in @('db.dump','auth/auth.db','secrets/storage.key')) { if (-not $paths.Contains($required)) { $errors.Add('member_missing') } }
     $key=@($Manifest['members'] | Where-Object { $_['path'] -ceq 'secrets/storage.key' })
     if ($key.Count -ne 1 -or $key[0]['bytes'] -ne 32) { $errors.Add('key_size') }
-    if ($Manifest['fileCount'] -isnot [int] -or $Manifest['fileCount'] -ne $paths.Count) { $errors.Add('file_count') }
+    if (-not (Test-SanyuInteger $Manifest['fileCount']) -or $Manifest['fileCount'] -ne $paths.Count) { $errors.Add('file_count') }
     $attachments=@($Manifest['members'] | Where-Object { $_['path'] -clike 'attachments/*' }).Count
-    if ($Manifest['attachmentCount'] -isnot [int] -or $Manifest['attachmentCount'] -ne $attachments -or
-        $Manifest['referencedAttachmentCount'] -isnot [int] -or $Manifest['referencedAttachmentCount'] -lt 0 -or
+    if (-not (Test-SanyuInteger $Manifest['attachmentCount']) -or $Manifest['attachmentCount'] -ne $attachments -or
+        -not (Test-SanyuInteger $Manifest['referencedAttachmentCount']) -or
         $Manifest['referencedAttachmentCount'] -gt $attachments) { $errors.Add('attachment_count') }
     return @{ok=($errors.Count -eq 0); blockers=@($errors | Select-Object -Unique)}
 }
@@ -60,9 +68,21 @@ function Test-SanyuTransferIdentity {
     return ($left.Count -eq $right.Count -and [string]::Join("`n",$left) -ceq [string]::Join("`n",$right))
 }
 
+function Test-SanyuPathAncestors {
+    param([string]$Path)
+    try {
+        $item=Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        while ($null -ne $item) {
+            if ($item -isnot [IO.DirectoryInfo] -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+            $item=$item.Parent
+        }
+        return $true
+    } catch { return $false }
+}
+
 function Test-SanyuCopiedFiles {
     param([string]$Directory,[System.Collections.IDictionary]$Manifest,[string]$ExpectedManifestSha256)
-    if ($ExpectedManifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or -not (Test-Path -LiteralPath $Directory -PathType Container) -or
+    if ($ExpectedManifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or -not (Test-SanyuPathAncestors $Directory) -or
         $null -eq $Manifest -or $Manifest['members'] -isnot [array]) { return $false }
     try {
         $root=Get-Item -LiteralPath $Directory -Force
@@ -102,7 +122,7 @@ function Read-SanyuSnapshotManifest {
     param([string]$Path,[string]$Database,[string]$User)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'manifest_missing' }
     $item=Get-Item -LiteralPath $Path -Force
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -gt 16MB) { throw 'manifest_unsafe' }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-SanyuPathAncestors $item.DirectoryName) -or $item.Length -gt 16MB) { throw 'manifest_unsafe' }
     $manifest=Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
     $result=Test-SanyuSnapshotManifest $manifest $Database $User
     if (-not $result.ok) { throw ('snapshot_rejected:' + [string]::Join(',', $result.blockers)) }
@@ -173,17 +193,57 @@ def copy_tree(source,dest):
         for name in sorted(files): members.append(copy_file(current/name,dest/rel/name))
 def docker_state(name):
     return json.loads(run(['docker','inspect','--format','{{json .State}}',name]))
+def check_source_identity(database_url,mounts,labels,network_bound,compose_owner_ok):
+    url=urllib.parse.urlsplit(database_url)
+    if (url.scheme not in ('postgres','postgresql') or
+        urllib.parse.unquote(url.path.lstrip('/'))!=DB or
+        urllib.parse.unquote(url.username or '')!=USER or
+        url.hostname!=DB_CONTAINER or url.port!=5432 or not network_bound or not compose_owner_ok):
+        raise RuntimeError('database_identity_mismatch')
+    expected={
+        '/attachments':(str(ATTACH),True),
+        '/auth':(str(AUTH.parent),True),
+        '/data':(str(STATE),True),
+        '/run/secrets/process_log_storage_key':(str(KEY),False),
+    }
+    if not isinstance(mounts,list) or len(mounts)!=len(expected): raise RuntimeError('mount_count_mismatch')
+    seen=set()
+    for mount in mounts:
+        if not isinstance(mount,dict): raise RuntimeError('mount_invalid')
+        target=mount.get('Destination')
+        if (target not in expected or target in seen or mount.get('Type')!='bind' or
+            mount.get('Source')!=expected[target][0] or type(mount.get('RW')) is not bool or
+            mount['RW']!=expected[target][1]): raise RuntimeError('mount_identity_mismatch')
+        seen.add(target)
+    if not isinstance(labels,dict) or any(labels.get(k)!=v for k,v in {
+        'com.docker.compose.project':'process-log',
+        'com.docker.compose.service':'app',
+        'com.docker.compose.project.config_files':COMPOSE,
+        'com.docker.compose.project.working_dir':str(ROOT),
+    }.items()): raise RuntimeError('compose_identity_mismatch')
 try:
     if docker_state('process-log').get('Status')!='exited': raise RuntimeError('source_must_be_stopped')
     if docker_state(DB_CONTAINER).get('Status')!='running': raise RuntimeError('database_unavailable')
+    if run(['docker','inspect','--format','{{.Name}}','process-log']).decode().strip()!='/process-log': raise RuntimeError('app_name_mismatch')
+    if run(['docker','inspect','--format','{{.Name}}',DB_CONTAINER]).decode().strip()!='/dev-postgres': raise RuntimeError('database_name_mismatch')
+    appnets=json.loads(run(['docker','inspect','--format','{{json .NetworkSettings.Networks}}','process-log']))
+    dbnets=json.loads(run(['docker','inspect','--format','{{json .NetworkSettings.Networks}}',DB_CONTAINER]))
+    shared=bool(isinstance(appnets,dict) and isinstance(dbnets,dict) and
+        'dev-databases_default' in appnets and 'dev-databases_default' in dbnets and
+        appnets['dev-databases_default'].get('NetworkID')==dbnets['dev-databases_default'].get('NetworkID') and
+        DB_CONTAINER in (dbnets['dev-databases_default'].get('Aliases') or []))
+    mounts=json.loads(run(['docker','inspect','--format','{{json .Mounts}}','process-log']))
+    labels=json.loads(run(['docker','inspect','--format','{{json .Config.Labels}}','process-log']))
+    # Docker has no field projection for one Env entry on a stopped container.
+    # Keep the Config.Env projection in this process only; never serialize or log it.
     env=json.loads(run(['docker','inspect','--format','{{json .Config.Env}}','process-log']))
     values=dict(item.split('=',1) for item in env if '=' in item)
-    url=urllib.parse.urlsplit(values.get('DATABASE_URL',''))
-    if url.scheme not in ('postgres','postgresql') or urllib.parse.unquote(url.path.lstrip('/'))!=DB or urllib.parse.unquote(url.username or '')!=USER:
-        raise RuntimeError('database_identity_mismatch')
-    if not url.hostname or url.hostname in ('localhost','127.0.0.1'): raise RuntimeError('database_host_invalid')
     for item,kind in ((AUTH,False),(ATTACH,True),(STATE,True),(KEY,False),(COMPOSE,False)):
         safe(item,kind)
+    info=COMPOSE.stat()
+    compose_owner_ok=(info.st_uid==os.getuid()==1000 and stat.S_IMODE(info.st_mode)==0o600)
+    check_source_identity(values.get('DATABASE_URL',''),mounts,labels,shared,compose_owner_ok)
+    del env,values
     if KEY.stat().st_size!=32: raise RuntimeError('key_size_invalid')
     backup=pathlib.Path(BACKUP); safe(backup.parent,True)
     if os.path.lexists(backup): raise RuntimeError('backup_exists')
@@ -251,10 +311,13 @@ try:
     with os.fdopen(fd,'wb') as file: file.write(encoded);file.flush();os.fsync(file.fileno())
     print(json.dumps({'ok':True,'backup':BACKUP,'manifestSha256':hashlib.sha256(encoded).hexdigest(),'fileCount':len(members),'attachmentCount':manifest['attachmentCount']}))
 except Exception:
+    healthy=False
     try:
         if docker_state('process-log').get('Status')=='exited': run(['docker','start','process-log'])
+        state=docker_state('process-log')
+        healthy=state.get('Status')=='running' and state.get('Health',{}).get('Status')=='healthy'
     except Exception: pass
-    print('{"ok":false,"error":"snapshot_failed"}')
+    print(json.dumps({'ok':False,'error':'snapshot_failed','sourceMayBeDown':not healthy}))
     sys.exit(2)
 '@
     foreach ($pair in @(@('__BACKUP__',$Backup),@('__COMPOSE__',$Compose),@('__DB__',$Database),@('__USER__',$User),@('__DB_CONTAINER__',$DbContainer))) { $py=$py.Replace($pair[0],$pair[1]) }
@@ -268,8 +331,9 @@ except Exception:
         $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
         $process.StandardInput.Write($py);$process.StandardInput.Close()
         if (-not $process.WaitForExit(600000)) { $process.Kill($true);throw 'snapshot_timeout' }
-        $reply=$stdout.GetAwaiter().GetResult() | ConvertFrom-Json -AsHashtable
-        if ($process.ExitCode -ne 0 -or $reply.ok -cne $true) { throw 'snapshot_failed' }
+        try { $reply=$stdout.GetAwaiter().GetResult() | ConvertFrom-Json -AsHashtable }
+        catch { throw 'snapshot_remote_unavailable_source_state_unknown' }
+        if ($process.ExitCode -ne 0 -or $reply.ok -cne $true) { throw (Get-SanyuFailureCode $reply) }
         return $reply
     } finally { $process.Dispose() }
 }
@@ -277,7 +341,7 @@ except Exception:
 if ($MyInvocation.InvocationName -ne '.') {
     if ($Mode -eq 'verify') {
         $manifest=Read-SanyuSnapshotManifest $ManifestPath $ExpectedDatabase $ExpectedUser
-        [ordered]@{ok=$true; fileCount=$manifest.fileCount; attachmentCount=$manifest.attachmentCount} | ConvertTo-Json
+        [ordered]@{manifestOnly=$true; bytesVerified=$false; fileCount=$manifest.fileCount; attachmentCount=$manifest.attachmentCount} | ConvertTo-Json
     } else {
         if (-not $MaintenanceWindowConfirmed) { throw 'maintenance_window_required' }
         $reply=Invoke-SanyuRemoteSnapshot $SourceIdentityFile $SourceBackupPath $ComposePath $ExpectedDatabase $ExpectedUser $DatabaseContainer

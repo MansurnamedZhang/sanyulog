@@ -32,6 +32,9 @@ function Reject([string]$name, [scriptblock]$mutate) {
 }
 $valid=Test-SanyuSnapshotManifest (Fixture) -ExpectedDatabase 'process_log' -ExpectedUser 'process_log'
 Assert-True $valid.ok 'valid complete stopped snapshot rejected'
+Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$true}) -ceq 'snapshot_failed_source_may_be_down') 'failed restart hidden from operator'
+Assert-True ((Get-SanyuFailureCode @{ok=$false;sourceMayBeDown=$false}) -ceq 'snapshot_failed_source_state_verified_running') 'verified running status not distinguished'
+Assert-True ((Get-SanyuFailureCode @{}) -ceq 'snapshot_remote_unavailable_source_state_unknown') 'unknown state falsely treated as running'
 $withOrphan=Fixture; $withOrphan.referencedAttachmentCount=1
 Assert-True (Test-SanyuSnapshotManifest $withOrphan -ExpectedDatabase 'process_log' -ExpectedUser 'process_log').ok 'full copied tree may contain an unreferenced ciphertext file'
 Reject 'container writable' { param($f) $f.sourceStopped=$false }
@@ -65,6 +68,10 @@ Assert-True (-not (Test-SanyuTransferIdentity $left $right)) 'different length e
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('sanyu-snapshot-test-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temporary) | Out-Null
 try {
+    Assert-True (Test-SanyuPathAncestors $temporary) 'ordinary local staging ancestry rejected'
+    [IO.File]::WriteAllText((Join-Path $temporary 'manifest.json'),((Fixture) | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+    $verifyOutput=& pwsh -NoProfile -File $sut -Mode verify -ManifestPath (Join-Path $temporary 'manifest.json') -ExpectedDatabase process_log -ExpectedUser process_log | ConvertFrom-Json -AsHashtable
+    Assert-True ($LASTEXITCODE -eq 0 -and $verifyOutput.manifestOnly -eq $true -and $verifyOutput.bytesVerified -eq $false -and -not $verifyOutput.ContainsKey('ok')) 'manifest-only CLI falsely claims byte integrity'
     [IO.File]::WriteAllText((Join-Path $temporary 'manifest.json'),'{}',[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $temporary 'db.dump'),'abc',[Text.UTF8Encoding]::new($false))
     $manifestHash=(Get-FileHash -LiteralPath (Join-Path $temporary 'manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -105,4 +112,44 @@ else: raise AssertionError('unreadable child silently omitted')
 '@
 $walkResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $harness
 Assert-True ($LASTEXITCODE -eq 0 -and $walkResult -eq 'PASS remote walker rejects unreadable child') 'remote tree walk accepted skipped subtree'
+$identityHarness=@'
+import ast,pathlib,re,sys,urllib.parse
+source=sys.stdin.read();tree=ast.parse(source)
+fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='check_source_identity')
+P=pathlib.PurePosixPath
+ns={'re':re,'urllib':urllib,'DB':'app','USER':'hans','DB_CONTAINER':'dev-postgres',
+    'COMPOSE':'/home/hans/services/process-log/compose.yaml',
+    'ROOT':P('/home/hans/services/process-log'),
+    'AUTH':P('/home/hans/.local/share/process-log-auth/auth.db'),
+    'ATTACH':P('/home/hans/services/process-log/attachments'),
+    'STATE':P('/home/hans/services/process-log/state'),
+    'KEY':P('/home/hans/.config/process-log-secrets/storage.key')}
+exec(compile(ast.Module(body=[fn],type_ignores=[]),'<identity>','exec'),ns)
+mounts=[{'Type':'bind','Source':src,'Destination':dst,'RW':rw} for src,dst,rw in [
+ ('/home/hans/services/process-log/attachments','/attachments',True),
+ ('/home/hans/.local/share/process-log-auth','/auth',True),
+ ('/home/hans/services/process-log/state','/data',True),
+ ('/home/hans/.config/process-log-secrets/storage.key','/run/secrets/process_log_storage_key',False)]]
+labels={'com.docker.compose.project.config_files':'/home/hans/services/process-log/compose.yaml',
+        'com.docker.compose.project.working_dir':'/home/hans/services/process-log',
+        'com.docker.compose.project':'process-log','com.docker.compose.service':'app'}
+def reject(name,url='postgresql://hans:secret@dev-postgres:5432/app',m=None,l=None,common=True,owner=True):
+    try: ns['check_source_identity'](url, mounts if m is None else m, labels if l is None else l,common,owner)
+    except (RuntimeError,ValueError): return
+    raise AssertionError(name+' escaped')
+ns['check_source_identity']('postgresql://hans:secret@dev-postgres:5432/app',mounts,labels,True,True)
+reject('wrong host',url='postgresql://hans:secret@other-postgres:5432/app')
+reject('wrong port',url='postgresql://hans:secret@dev-postgres:5433/app')
+reject('wrong database',url='postgresql://hans:secret@dev-postgres:5432/other')
+reject('wrong user',url='postgresql://other:secret@dev-postgres:5432/app')
+reject('disjoint network',common=False)
+reject('wrong compose owner or mode',owner=False)
+bad=list(mounts);bad[0]=dict(bad[0],Source='/home/hans/other/attachments');reject('stale mount',m=bad)
+bad=list(mounts);bad[3]=dict(bad[3],RW=True);reject('writable key',m=bad)
+bad=dict(labels);bad['com.docker.compose.project.config_files']='/home/hans/other/compose.yaml';reject('wrong compose',l=bad)
+bad=dict(labels);bad['com.docker.compose.project.working_dir']='/home/hans/other';reject('wrong working directory',l=bad)
+print('PASS exact DB endpoint, mounts, Compose and network identity')
+'@
+$identityResult=$block.Groups[1].Value | & .\.venv\Scripts\python.exe -B -c $identityHarness
+Assert-True ($LASTEXITCODE -eq 0 -and $identityResult -eq 'PASS exact DB endpoint, mounts, Compose and network identity') 'remote identity gate failed'
 Write-Host 'GREEN: snapshot manifest and transfer gates passed (local fixtures; no network).'
