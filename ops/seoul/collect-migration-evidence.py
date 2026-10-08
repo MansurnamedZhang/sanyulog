@@ -358,8 +358,8 @@ def validate_manifest(snapshot):
         if relative == 'manifest.json':
             continue
         for parent in Path(relative).parents:
-            if parent != Path('.'):
-                expected_dirs.add(parent.as_posix())
+            if parent != Path('.') and parent.as_posix() not in expected_dirs:
+                raise ValueError('snapshot_member_parent_missing')
     actual = set()
     actual_dirs = set()
     for directory, dirs, files in os.walk(snapshot, followlinks=False, onerror=abort_walk):

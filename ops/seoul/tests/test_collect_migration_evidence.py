@@ -153,8 +153,38 @@ class CollectorFixture(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.validate_manifest(snapshot)
         (snapshot / 'state').mkdir()
+        (snapshot / 'state' / 'empty-nested').mkdir()
+        collector.validate_manifest(snapshot)
         manifest['databaseName'] = 'wrong'
         (snapshot / 'manifest.json').write_text(json.dumps(manifest))
+        with self.assertRaises(ValueError):
+            collector.validate_manifest(snapshot)
+
+    def test_manifest_cannot_omit_parent_of_nonempty_file(self):
+        snapshot = self.root / 'snapshot-parent'
+        snapshot.mkdir()
+        for name in ('auth', 'attachments', 'state', 'config', 'secrets'):
+            (snapshot / name).mkdir()
+        (snapshot / 'state' / 'nested').mkdir()
+        payloads = {'db.dump': b'PGDMPfixture', 'auth/auth.db': b'auth',
+                    'secrets/storage.key': bytes(range(32)),
+                    'state/nested/data.bin': b'nonempty'}
+        members = []
+        for relative, payload in payloads.items():
+            (snapshot / relative).write_bytes(payload)
+            members.append(dict(path=relative, kind='file', bytes=len(payload),
+                                sha256=hashlib.sha256(payload).hexdigest()))
+        roots = [dict(path=name, kind='directory') for name in ('auth', 'attachments', 'state', 'config', 'secrets')]
+        roots.append(dict(path='state/nested', kind='directory'))
+        manifest = dict(schemaVersion=1, complete=True, sourceStopped=True,
+                        databaseName='process_log', dumpDatabase='process_log',
+                        databaseUser='process_log', dumpFormat='custom', keyBytes=32,
+                        members=members, roots=roots)
+        path = snapshot / 'manifest.json'
+        path.write_text(json.dumps(manifest))
+        collector.validate_manifest(snapshot)
+        manifest['roots'] = roots[:-1]
+        path.write_text(json.dumps(manifest))
         with self.assertRaises(ValueError):
             collector.validate_manifest(snapshot)
 
