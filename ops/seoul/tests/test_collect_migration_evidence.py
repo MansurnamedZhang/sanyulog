@@ -125,6 +125,7 @@ class CollectorFixture(unittest.TestCase):
         snapshot.mkdir()
         for name in ('auth', 'attachments', 'state', 'config', 'secrets'):
             (snapshot / name).mkdir()
+        (snapshot / 'state' / 'empty-nested').mkdir()
         for relative, payload in (('db.dump', b'PGDMPfixture'), ('auth/auth.db', b'auth'),
                                   ('secrets/storage.key', bytes(range(32)))):
             path = snapshot / relative
@@ -137,9 +138,17 @@ class CollectorFixture(unittest.TestCase):
         manifest = dict(schemaVersion=1, complete=True, sourceStopped=True,
                         databaseName='process_log', dumpDatabase='process_log', databaseUser='process_log',
                         dumpFormat='custom', keyBytes=32, members=members,
-                        roots=[dict(path=name, kind='directory') for name in ('auth', 'attachments', 'state', 'config', 'secrets')])
+                        roots=[dict(path=name, kind='directory') for name in ('auth', 'attachments', 'state', 'config', 'secrets')]
+                              + [dict(path='state/empty-nested', kind='directory')])
         (snapshot / 'manifest.json').write_text(json.dumps(manifest))
         collector.validate_manifest(snapshot)
+        (snapshot / 'state' / 'extra-empty').mkdir()
+        with self.assertRaises(ValueError):
+            collector.validate_manifest(snapshot)
+        (snapshot / 'state' / 'extra-empty').rmdir()
+        (snapshot / 'state' / 'empty-nested').rmdir()
+        with self.assertRaises(ValueError):
+            collector.validate_manifest(snapshot)
         (snapshot / 'state').rmdir()
         with self.assertRaises(ValueError):
             collector.validate_manifest(snapshot)
