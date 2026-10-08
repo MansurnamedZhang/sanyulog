@@ -319,4 +319,48 @@ foreach ($role in @('target','source')) {
         }
     }
 }
+foreach ($scenario in @('fresh-z','fresh-offset','stale','future','unspecified','locale-string')) {
+    Case "CLI real JSON file timestamp $scenario" {
+        function Get-SeoulReleaseObservation { return (New-Fixture).release }
+        function Get-SeoulHostObservation($Role,$IdentityFile,$BackupPath) { return (New-Fixture)[$Role] }
+        $at=[datetimeoffset]::UtcNow
+        $stamp=switch ($scenario) {
+            'fresh-z' { $at.AddMinutes(-7).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'",[cultureinfo]::InvariantCulture) }
+            'fresh-offset' { $at.AddMinutes(-7).ToOffset([timespan]::FromHours(8)).ToString('o',[cultureinfo]::InvariantCulture) }
+            'stale' { $at.AddMinutes(-16).ToString('o',[cultureinfo]::InvariantCulture) }
+            'future' { $at.AddMinutes(2).ToString('o',[cultureinfo]::InvariantCulture) }
+            'unspecified' { $at.LocalDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss",[cultureinfo]::InvariantCulture) }
+            'locale-string' { $at.LocalDateTime.ToString('MM/dd/yyyy HH:mm:ss',[cultureinfo]::InvariantCulture) }
+        }
+        $fixture=New-Fixture; $fixture.cloudflare.observedAtUtc=$stamp
+        $file=Join-Path $PSScriptRoot ('.preflight-time-'+[guid]::NewGuid().ToString('N')+'.json')
+        $stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew)
+        try { $writer=[IO.StreamWriter]::new($stream); $writer.Write(($fixture.cloudflare | ConvertTo-Json -Depth 8)); $writer.Dispose() } finally { $stream.Dispose() }
+        try {
+            # Exercise actual CLI orchestrator Get-Content + JSON parsing; only network boundaries are substituted.
+            $r=Invoke-SeoulPreflight $fixture.release.sha 37766550561 $file '' '' '/home/hans/services/process-log/backups/v0.11.1-20261008-161548'
+            if ($scenario -in @('fresh-z','fresh-offset')) { Assert-True $r.readyForStaging "fresh JSON $scenario rejected" }
+            else { Assert-True (-not $r.readyForStaging -and $r.blockers -contains 'cloudflare_stale') "$scenario timestamp escaped rejection" }
+        } finally {
+            $item=Get-Item -LiteralPath $file
+            if ($item.DirectoryName -ne $PSScriptRoot -or $item.Name -notmatch '^\.preflight-time-[a-f0-9]{32}\.json$' -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe test file cleanup' }
+            Remove-Item -LiteralPath $item.FullName -ErrorAction Stop
+        }
+    }
+}
+Case 'actual JSON UTC DateTime retains its instant across freshness evaluation' {
+    $parsed='{"observedAtUtc":"2026-10-08T11:37:47Z"}' | ConvertFrom-Json -AsHashtable
+    Assert-True (Test-FreshObservation $parsed.observedAtUtc ([datetimeoffset]'2026-10-08T11:44:00Z')) 'JSON UTC value lost its timezone'
+}
+foreach ($row in @(
+    @{name='UTC exact boundary';stamp=[datetime]::new(2026,10,8,11,29,0,[DateTimeKind]::Utc);want=$true},
+    @{name='UTC just stale';stamp=[datetime]::new(2026,10,8,11,28,59,[DateTimeKind]::Utc);want=$false},
+    @{name='UTC future';stamp=[datetime]::new(2026,10,8,11,44,1,[DateTimeKind]::Utc);want=$false},
+    @{name='DateTimeOffset instant';stamp=[datetimeoffset]'2026-10-08T19:37:47+08:00';want=$true},
+    @{name='unspecified DateTime';stamp=[datetime]::new(2026,10,8,11,37,47,[DateTimeKind]::Unspecified);want=$false},
+    @{name='local DateTime';stamp=([datetimeoffset]'2026-10-08T11:37:47Z').LocalDateTime;want=$false},
+    @{name='invalid date';stamp='2026-99-08T11:37:47Z';want=$false}
+)) {
+    Case "freshness typed boundary $($row.name)" { Assert-True ((Test-FreshObservation $row.stamp ([datetimeoffset]'2026-10-08T11:44:00Z')) -eq $row.want) "wrong result for $($row.name)" }.GetNewClosure()
+}
 Write-Host "GREEN: $script:passed preflight behavioral tests passed (fake observations; no network)."

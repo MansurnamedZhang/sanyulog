@@ -20,7 +20,19 @@ function Test-NonNegativeInteger($Value) {
 }
 
 function Test-FreshObservation($Value, [datetimeoffset]$Now) {
-    try { $age = ($Now - [datetimeoffset]::Parse([string]$Value)).TotalSeconds; return $age -ge 0 -and $age -le 900 }
+    try {
+        if ($Value -is [datetimeoffset]) { $instant=$Value }
+        elseif ($Value -is [datetime]) {
+            if ($Value.Kind -ne [DateTimeKind]::Utc) { return $false }
+            $instant=[datetimeoffset]::new($Value)
+        }
+        elseif ($Value -is [string] -and $Value -cmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$') {
+            $instant=[datetimeoffset]::Parse($Value,[cultureinfo]::InvariantCulture,[Globalization.DateTimeStyles]::None)
+        }
+        else { return $false }
+        $age=($Now-$instant).TotalSeconds
+        return $age -ge 0 -and $age -le 900
+    }
     catch { return $false }
 }
 
@@ -354,7 +366,13 @@ function Invoke-SeoulPreflight {
     try { $snapshot.target=Get-SeoulHostObservation target $TargetKey $BackupPath } catch { $snapshot.target=@{complete=$false} }
     try {
         if (-not $CloudflarePath -or (Get-Item -LiteralPath $CloudflarePath).Length -gt 2MB) { throw 'invalid_evidence' }
-        $snapshot.cloudflare=Get-Content -LiteralPath $CloudflarePath -Raw | ConvertFrom-Json -AsHashtable
+        $json=Get-Content -LiteralPath $CloudflarePath -Raw
+        $snapshot.cloudflare=$json | ConvertFrom-Json -AsHashtable
+        # Preserve the explicit zone from JSON on every supported PowerShell version.
+        # Automatic date conversion can turn an offset into a local DateTime with lost provenance.
+        $document=[Text.Json.JsonDocument]::Parse($json)
+        try { $snapshot.cloudflare.observedAtUtc=$document.RootElement.GetProperty('observedAtUtc').GetString() }
+        finally { $document.Dispose() }
     } catch { $snapshot.cloudflare=@{} }
     return Test-SeoulPreflight $snapshot $Sha
 }

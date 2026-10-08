@@ -55,6 +55,8 @@ PowerShell **不直接查询 Cloudflare API**，不接受 Cloudflare 凭据。�
 
 不保存 DNS content、TXT 内容、账户邮箱、API 响应原文或任何 token。允许确实没有记录时的空数组；缺失字段、null、未完成分页、身份不符、未来时间或超过 15 分钟都拒绝。目标 DNS 名大小写/末尾点会归一化；已存在 `notes.896364.xyz` 或 `sanyulog-media` 拒绝。外部写入前须重新查询，15 分钟只是预检最大年龄，不是占用锁。
 
+`observedAtUtc` 必须是带 `Z`（推荐）或明确 `±HH:mm` 偏移的 ISO-8601 JSON 字符串。CLI 保留该字段原始字符串，避免 PowerShell 自动转换日期时丢失时区。直接调用门禁时也接受 UTC Kind 的 DateTime 或保留偏移的 DateTimeOffset；拒绝 Local/Unspecified DateTime、无时区字符串和本地化日期格式。年龄严格为 0–900 秒，不因时区问题放宽窗口。
+
 ## 门禁和观测边界
 
 - 发布：`git rev-parse <完整 SHA>^{commit}`，`gh run view <明确 run ID>` 的仓库 URL、push 事件、`headSha`、Checks 名、completed/success、非空成功 jobs；另须成功的镜像 build/import/record 三个 CI 步骤。`r2_reconcile.py` 基于指定提交的原始 Git 文本字节（保留末尾换行）作 SHA-256，而非当前工作树文件。CI 构建/导入成功不是发布镜像摘要、部署或实际 R2 成功；Task 2 仍须制作并核对该 SHA 的可追溯镜像。
