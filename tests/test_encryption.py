@@ -2,11 +2,61 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import subprocess
+import sys
 from unittest.mock import patch
 from pathlib import Path
 from store import Store
 
 class EncryptionTests(unittest.TestCase):
+    def test_restore_backup_is_reentrant_inside_same_account_media_lock(self):
+        from store import media_lock
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            key = root / 'key'; key.write_bytes(os.urandom(32))
+            s = Store(root / 'data', encryption_key_file=key)
+            p = s.create_project({'name':'project'})
+            r = s.create_record({'project_id':p['id'], 'title':'note'})
+            a = s.add_attachment(r['id'], 'file', b'original', 'text/plain')
+            backup = s.backup()
+            with media_lock(s.root):
+                s.restore(backup)  # restore itself calls backup under this lock.
+                restored_backup = s.backup()
+            copy = Store(root / 'copy', encryption_key_file=key)
+            copy.restore(restored_backup)
+            self.assertEqual(copy.read_attachment(a['id'])[1], b'original')
+
+    def test_media_mutations_fail_closed_while_other_process_holds_stable_lock(self):
+        # Missing guards would permit deletion or restore during a GC scan.
+        from store import media_lock
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            key = root / 'key'; key.write_bytes(os.urandom(32))
+            s = Store(root / 'data', encryption_key_file=key)
+            p = s.create_project({'name':'project'})
+            r = s.create_record({'project_id':p['id'], 'title':'note'})
+            a = s.add_attachment(r['id'], 'file', b'original', 'text/plain')
+            backup = s.backup()
+            code = ('from store import media_lock; import sys\n'
+                    'with media_lock(sys.argv[1]):\n'
+                    ' print("locked", flush=True)\n'
+                    ' sys.stdin.readline()\n')
+            child = subprocess.Popen([sys.executable, '-c', code, str(s.root)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(), 'locked')
+                with patch('store.media_lock', side_effect=lambda root: media_lock(root, timeout=0.05)):
+                    for operation in (lambda: s.add_attachment(r['id'], 'new', b'new', 'text/plain'),
+                                      lambda: s.delete_attachment(a['id']), lambda: s.delete_record(r['id']),
+                                      lambda: s.delete_project(p['id']), lambda: s.restore(backup),
+                                      s.encrypt_attachment_files, s.backup):
+                        with self.subTest(operation=operation), self.assertRaises(ValueError): operation()
+            finally:
+                child.communicate('\n', timeout=10)
+            self.assertEqual(s.read_attachment(a['id'])[1], b'original')
+            s.restore(backup)
+            self.assertTrue((s.root / '.media.lock').is_file())
+
     def test_encrypted_storage_migration_backup_and_wrong_key(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

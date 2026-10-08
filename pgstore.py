@@ -41,6 +41,11 @@ class Connection:
 
 
 class PostgreSQLStore(Store):
+    def media_guard(self):
+        # connection() is reentrant and holds the existing cross-process
+        # advisory transaction lock, including startup encryption and restore.
+        return self.connection()
+
     def __init__(self, root, database_url, attachments_dir=None, encryption_key_file=None, namespace=None, *, media_mirror=None, storage_id='owner'):
         if namespace is not None and not re.fullmatch(r'process_log_user_[a-f0-9]{32}', namespace):
             raise ValueError('账号数据库命名空间无效')

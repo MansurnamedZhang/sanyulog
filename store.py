@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import sqlite3
+import stat
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 from contextlib import contextmanager
@@ -16,6 +18,80 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_BACKUP_BYTES = 250 * 1024 * 1024
+_MEDIA_LOCKS = threading.local()
+
+
+def checked_media_path(path):
+    """Reject links/reparse points in every existing component, before resolving."""
+    path = Path(path).absolute()
+    for part in (path, *path.parents):
+        try:
+            info = part.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+            raise ValueError('Unsafe media path')
+    return path
+
+
+@contextmanager
+def media_lock(root, *, timeout=30):
+    """Stable lock outside the replaceable SQLite DB and attachments directory.
+
+    Ordering: Store RLock -> media lock -> DB transaction. Never unlink this
+    file. Readers/inventory do not acquire or create it. Windows uses the same
+    byte-range lock across processes; production Linux uses flock.
+    """
+    root = checked_media_path(root)
+    if not root.is_dir():
+        raise ValueError('Media account root is unavailable')
+    path = checked_media_path(root / '.media.lock')
+    # restore/startup may invoke backup while already guarded on this thread.
+    held = getattr(_MEDIA_LOCKS, 'held', None)
+    if held is None:
+        held = _MEDIA_LOCKS.held = set()
+    identity = os.path.normcase(str(path))
+    if identity in held:
+        yield
+        return
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    locked = False
+    try:
+        info = os.fstat(fd)
+        current = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)):
+            raise ValueError('Unsafe media lock')
+        deadline = time.monotonic() + timeout
+        while not locked:
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ValueError('Media maintenance lock unavailable') from None
+                time.sleep(0.02)
+        held.add(identity)
+        try:
+            yield
+        finally:
+            held.remove(identity)
+    finally:
+        if locked:
+            if os.name == 'nt':
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def now():
@@ -68,7 +144,7 @@ class Store:
         self.files.mkdir(exist_ok=True)
         self.db = self.root / 'process.db'
         self.lock = threading.RLock()
-        with self.connection() as c:
+        with self.lock, self.media_guard(), self.connection() as c:
             version = c.execute('PRAGMA user_version').fetchone()[0]
             if version not in (0, 1, 2):
                 raise ValueError('数据库版本不兼容')
@@ -93,6 +169,9 @@ class Store:
             raise ValueError('R2 媒体镜像需要配置原始加密密钥')
         self.media_mirror = media_mirror
         self.storage_id = storage_id
+
+    def media_guard(self):
+        return media_lock(self.root)
 
     def migrate_encryption(self, c, cipher=None):
         cipher = cipher or self.cipher
@@ -129,6 +208,10 @@ class Store:
             Path(temporary).unlink(missing_ok=True)
 
     def encrypt_attachment_files(self):
+        with self.lock, self.media_guard():
+            self._encrypt_attachment_files()
+
+    def _encrypt_attachment_files(self):
         if self.cipher.aes is None:
             return
         # Atomic per-file conversion is restartable after interrupted migrations.
@@ -302,7 +385,8 @@ class Store:
         return {'id': project_id, 'name': data['name'].strip()}
 
     def delete_project(self, project_id):
-        with self.connection() as c:
+        with self.lock, self.media_guard(), self.connection() as c:
+            # Retain bytes as durable pending GC; reconcile rechecks all refs.
             c.execute('DELETE FROM projects WHERE id=?', (project_id,))
 
     def validate_record(self, c, d):
@@ -365,7 +449,7 @@ class Store:
                                       {'title': original['title'][:290]+' · 副本', 'related_id': record_id})
 
     def delete_record(self, record_id):
-        with self.connection() as c:
+        with self.lock, self.media_guard(), self.connection() as c:
             c.execute('DELETE FROM records WHERE id=?', (record_id,))
 
     def add_entry(self, record_id, data):
@@ -411,7 +495,7 @@ class Store:
         return [r for r in self.state()['records'] if q in json.dumps(r, ensure_ascii=False).casefold()]
 
     def add_attachment(self, record_id, name, content, mime):
-        with self.lock, self.connection() as c:
+        with self.lock, self.media_guard(), self.connection() as c:
             # Cover local writes as well as retry lookup + insertion across
             # instances. PostgreSQL's connection already holds an advisory lock.
             if self.media_mirror is not None and isinstance(c, sqlite3.Connection):
@@ -472,7 +556,7 @@ class Store:
             return dict(row), self.decode_attachment((self.files / row['file']).read_bytes(), row['file'])
 
     def delete_attachment(self, attachment_id):
-        with self.connection() as c:
+        with self.lock, self.media_guard(), self.connection() as c:
             row = c.execute('SELECT record_id FROM attachments WHERE id=?', (attachment_id,)).fetchone()
             if row:
                 cells = json.loads(c.execute('SELECT cells FROM notebooks WHERE record_id=?', (row[0],)).fetchone()[0])
@@ -533,7 +617,7 @@ class Store:
         return '\n'.join(lines)
 
     def backup(self):
-        with self.lock:
+        with self.lock, self.media_guard():
             with self.connection() as c:
                 filenames = [r['file'] for r in c.execute('SELECT DISTINCT file FROM attachments')]
             total_size = self.db.stat().st_size + sum((self.files / name).stat().st_size for name in filenames)
@@ -548,7 +632,9 @@ class Store:
             return self.cipher.encrypt(out.getvalue(), 'backup')
 
     def restore(self, content):
-        with self.lock:
+        # Restoration is local-only. A fresh reconciliation must verify R2;
+        # retained old blobs and missing remote blobs are the durable worklist.
+        with self.lock, self.media_guard():
             try:
                 with zipfile.ZipFile(io.BytesIO(self.cipher.decrypt(content, 'backup'))) as z:
                     names = z.namelist()
