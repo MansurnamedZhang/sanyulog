@@ -1,6 +1,6 @@
 # 三余记首尔预检与隔离配置（Tasks 1–2）
 
-本目录包含精确发布基线、只读隔离门禁，以及 Task 2 的声明式 Compose/Nginx 配置与本地契约测试。预检和测试不部署、不停写、不创建桶/DNS/容器，不运行迁移。Task 2 的实际资源创建和联调另由控制端执行；Tasks 3–5 尚未实现。`readyForStaging=true` 只说明本次观察满足预检，`deploymentAuthorized` 永远为 `false`；外部写入仍须按已批准计划单独授权并即时复查。
+本目录包含精确发布基线、只读隔离门禁、Task 2 的声明式 Compose/Nginx 配置，以及 Task 3 的受限快照脚本。静态预检和本地测试不部署、不停写、不创建桶/DNS/容器，不运行迁移。Task 3 脚本不会自动停止源容器、传输文件或切换 DNS；真实快照仅能在明确维护窗口内、源容器已停止后单独调用。`readyForStaging=true` 只说明本次观察满足预检，`deploymentAuthorized` 永远为 `false`；外部写入仍须按已批准计划单独授权并即时复查。
 
 ## 执行与证据
 
@@ -168,3 +168,33 @@ pwsh -NoProfile -File ops/seoul/tests/preflight.tests.ps1
 任何失败保留源站正常服务和本轮诊断材料，不停源站、不开始恢复、不启用最终代理；不自动重试一次性 token 创建。控制端记录新资源 ID、UTC 时间、服务状态、source SHA、image ID、非秘密配置 SHA-256、已修改单个 site 的备份路径与脱敏测试摘要。秘密安全交付、即时占用复查或人工权限缺失时暂停，由用户处理。本文仅是 Task 2 配置交付，**不是首尔资源/HTTPS/R2 已验收的证据**。
 
 接口参考：[Compose services / binds / env_file](https://docs.docker.com/reference/compose-file/services/)、[R2 桶范围凭据](https://developers.cloudflare.com/r2/api/tokens/)、[Nginx return 指令](https://nginx.org/en/docs/http/ngx_http_rewrite_module.html#return)。
+
+## Task 3：源站一致快照与受限传输
+
+先运行 `pwsh -NoProfile -File ops/seoul/tests/snapshot-source.tests.ps1`。这些测试仅使用本地假清单/临时文件，不触碰源站。真实运行需由控制端另行确认：Task 2 HTTPS 维护入口仍返回 503、私有桶及目标 PG18 fixture 已验收；源 `process-log` 与 `dev-postgres` 的身份/挂载、应用数据库 URL 中的数据库名和用户、Compose 路径、已有备份根及两端容量再次只读核实；保留源备份和旧 PostgreSQL。源 PostgreSQL 为 **18**；不得将其 custom-format dump 直接恢复到目标 PostgreSQL 16，目标专用库必须为已核实的兼容 PG18。
+
+维护窗口由用户确认后，操作员仅停止 `process-log`（不停止 `dev-postgres` 或其它容器），再立即核对其状态为 `exited`。快照脚本本身不负责停容器，要求显式 `-MaintenanceWindowConfirmed` 和全新、不存在的 `snapshot-YYYYMMDDTHHMMSSZ` 目录；固定源账号、主机和 `StrictHostKeyChecking=yes`，拒绝密码提示。数据库名/用户必须由刚核实的容器配置确定，不从聊天、旧预检摘要或测试夹具猜测。示例中的 `app`/`hans` 仅对应 2026-10-08 只读发现，执行时复核：
+
+```powershell
+pwsh -NoProfile -File ops/seoul/snapshot-source.ps1 -Mode snapshot `
+  -MaintenanceWindowConfirmed `
+  -SourceIdentityFile C:\Users\hans\.ssh\id_ed25519_codex_dev_linux `
+  -SourceBackupPath /home/hans/services/process-log/backups/snapshot-<UTC时间> `
+  -ComposePath /home/hans/services/process-log/compose.yaml `
+  -DatabaseContainer dev-postgres -ExpectedDatabase app -ExpectedUser hans
+```
+
+脚本重新确认应用停止、DB 容器运行、`DATABASE_URL` 数据库/用户匹配、所有源路径和祖先无符号链接、原始 `storage.key` 恰为 32 字节。以新建的 `0700` 源备份目录保存 PG18 `pg_dump -Fc`（由源 PG18 的 `pg_restore -l` 可列出）、SQLite 在线 backup API 合并后的完整 `auth.db`、整个附件树与 `state` 树、精确 Compose 和原密钥；普通文件以 `0600` 新建。源 `auth.db` 中所有账号（含停用）都参与附件引用查询，未初始化 schema 不会被创建；逐个确认 PostgreSQL 引用的密文文件存在于整树副本。清单记录每个复制文件的字节数/SHA-256、账号/会话聚合数和源容器停止态，不记录凭据或密钥正文。失败时保留部分备份供调查并尝试重启源应用；操作员必须独立核实健康，不得因异常输出继续传输。脚本成功后源应用仍保持停止，直到迁移或人工回退决定。
+
+同机源备份是持久恢复点，不能在转运后删除。经现有 SSH/SCP 将**该一个精确备份目录**下载到当前 Windows 用户与 SYSTEM 独占的临时目录；创建前检查目标不存在、父目录/路径不是 junction/reparse point，禁用 ACL 继承并只授予当前用户 SID 与 `S-1-5-18`（SYSTEM）完全控制。不得把备份放在 Git 工作树、公共下载目录、同步盘或聊天附件。SCP 返回码为 0 后，在受限控制端加载脚本并执行：
+
+```powershell
+. ./ops/seoul/snapshot-source.ps1
+$manifest = Read-SanyuSnapshotManifest '<本机受限临时目录>\snapshot-<UTC时间>\manifest.json' 'app' 'hans'
+$expectedManifestSha256 = '<源站脚本输出的64位manifestSha256>'
+if (-not (Test-SanyuCopiedFiles '<本机受限临时目录>\snapshot-<UTC时间>' $manifest $expectedManifestSha256)) { throw 'transfer_bytes_rejected' }
+```
+
+`Test-SanyuCopiedFiles` 对清单中的**每个文件**重算长度与 SHA-256，拒绝 reparse point、未列出的文件、缺件和 manifest 本身摘要不符；`Test-SanyuTransferIdentity` 用于比较两端同格式清单的全部成员。之后只把这一精确目录上传至首尔 `/home/ubuntu/backups/sanyulog/` 下全新的 `0700` 子目录，普通文件保持 `0600`，在首尔**再次逐项重算**并与源清单的 path/bytes/SHA-256 对比，检查 `pg_restore -l`、auth SQLite `quick_check` 与原密钥长度。不要仅凭 SCP 成功或文件数相等宣布迁移完成。控制端受限暂存只有在首尔校验通过后才可按精确路径清理；源备份长期保留。任何一步失败，保持首尔维护页，不恢复/切换目标；优先重启并检查源应用健康，再诊断。若源/目标在此后新增写入，旧清单立即失效，必须重新维护窗口获取一致快照。
+
+当前脚本只实现源快照及本机逐字节校验函数，**不自动执行 SCP、首尔端哈希核对或生产恢复**；这些仍是操作员独立验收门禁，不能把本地 GREEN 说成 Task 3 已在生产完成。
