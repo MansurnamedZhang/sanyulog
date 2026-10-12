@@ -1,4 +1,5 @@
 import { escapeHTML, parseCSV, renderMarkdown } from "./notebook-core.mjs";
+import { renderCodeBlock } from "./code-blocks.mjs";
 
 const labels = {
   markdown: "文本",
@@ -74,9 +75,14 @@ export function renderNotebookHTML(
   const cells = (data.cells || [])
     .map((cell, index) => {
       let body = "";
-      if (cell.type === "markdown") body = renderMarkdown(cell.source || "");
+      if (cell.type === "markdown")
+        body = renderMarkdown(cell.source || "", { codeControls: false });
       else if (cell.type === "table") body = tableHTML(cell.source || "");
-      else if (cell.type === "code" || cell.type === "log")
+      else if (cell.type === "code")
+        body = renderCodeBlock(cell.source || "", cell.language, {
+          controls: false,
+        });
+      else if (cell.type === "log")
         body = `<pre><code>${safe(cell.source || "")}</code></pre>`;
       const attached = attachmentsHTML(cell.attachment_ids || [], attachments);
       return `<section class="nb-export-cell"><h2 class="nb-export-cell-heading">${String(index + 1).padStart(2, "0")} · ${labels[cell.type] || "内容"}${cell.type === "code" && cell.language ? ` <small>${safe(cell.language)}</small>` : ""}</h2>${body}${attached}</section>`;

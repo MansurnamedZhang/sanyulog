@@ -232,6 +232,8 @@ class Handler(BaseHTTPRequestHandler):
             if method == 'GET':
                 static = {'/vendor/rich-editor.js': 'vendor/rich-editor.js', '/vendor/mermaid-runtime.js': 'vendor/mermaid-runtime.js', '/mermaid-renderer.js': 'mermaid-renderer.js', '/mermaid-source.mjs': 'mermaid-source.mjs', '/notebook-export.mjs': 'notebook-export.mjs', '/accounts-ui.js': 'accounts-ui.js', '/auth-ui.js': 'auth-ui.js', '/login.css': 'login.css', '/cell-export.html': 'cell-export.html', '/cell-export.js': 'cell-export.js', '/cell-export.css': 'cell-export.css', '/vendor/html-to-image.js': 'vendor/html-to-image.js', '/': 'index.html', '/app.js': 'app.js', '/library.mjs': 'library.mjs', '/style.css': 'style.css', '/notebook.js': 'notebook.js', '/notebook-core.mjs': 'notebook-core.mjs', '/vendor/katex.mjs': 'vendor/katex.mjs', '/brand/process-log-logo.png': 'brand/process-log-logo.png'}
                 static.update({
+                    '/code-blocks.mjs': 'code-blocks.mjs', '/code-blocks.css': 'code-blocks.css',
+                    '/vendor/code-runtime.mjs': 'vendor/code-runtime.mjs',
                     '/favicon.ico': 'brand/favicon.ico',
                     '/manifest.webmanifest': 'manifest.webmanifest',
                     **{f'/brand/{name}': f'brand/{name}' for name in (

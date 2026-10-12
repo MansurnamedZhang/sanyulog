@@ -2,6 +2,7 @@ import { renderMarkdown } from "./notebook-core.mjs";
 import { renderNotebookHTML } from "./notebook-export.mjs";
 import { renderMermaidDiagrams } from "./mermaid-renderer.js";
 import "./vendor/html-to-image.js";
+import { renderCodeBlock } from "./code-blocks.mjs";
 const content = document.querySelector("#content");
 const status = document.querySelector("#status");
 const png = document.querySelector("#png");
@@ -64,8 +65,12 @@ try {
       ),
     );
   } else if (cell?.type === "markdown") {
-    content.innerHTML = renderMarkdown(cell.source);
+    content.innerHTML = renderMarkdown(cell.source, { codeControls: false });
     await renderMermaidDiagrams(content);
+  } else if (cell?.type === "code") {
+    content.innerHTML = renderCodeBlock(cell.source, cell.language, {
+      controls: false,
+    });
   } else if (cell) {
     const pre = document.createElement("pre");
     pre.textContent = cell.source;

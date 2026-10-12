@@ -1,5 +1,6 @@
 import { normalizeMermaidDefinition } from "./mermaid-source.mjs";
 import katex from "./vendor/katex.mjs";
+import { renderCodeBlock } from "./code-blocks.mjs";
 
 export function parseCSV(text, delimiter = ",") {
   text = String(text)
@@ -360,7 +361,7 @@ function inline(source) {
   return text.replace(/\u0000(\d+)\u0000/g, (_, i) => tokens[Number(i)]);
 }
 
-export function renderMarkdown(source) {
+export function renderMarkdown(source, { codeControls = true } = {}) {
   const lines = String(source).replace(/\r\n/g, "\n").split("\n"),
     html = [];
   const cells = (line) =>
@@ -403,7 +404,9 @@ export function renderMarkdown(source) {
         );
       else
         html.push(
-          "<pre><code>" + escapeHTML(code.join("\n")) + "</code></pre>",
+          renderCodeBlock(code.join("\n"), fence[2].trim(), {
+            controls: codeControls,
+          }),
         );
       continue;
     }

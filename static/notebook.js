@@ -1,5 +1,11 @@
 import { renderMermaid } from "./mermaid-renderer.js";
 import {
+  renderCodeBlock,
+  languageOptions,
+  codeBlockAction,
+  copyCodeText,
+} from "./code-blocks.mjs";
+import {
   newId,
   Autosave,
   escapeHTML as esc,
@@ -49,40 +55,8 @@ const makeCell = (type = "markdown") => ({
   language: type === "code" ? "python" : "",
   attachment_ids: [],
 });
-async function copyTextToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // LAN HTTP and browsers that deny the async API use the native copy path.
-    }
-  }
-  const focused = document.activeElement,
-    area = document.createElement("textarea");
-  area.value = text;
-  area.readOnly = true;
-  Object.assign(area.style, {
-    position: "fixed",
-    top: "0",
-    left: "0",
-    width: "1px",
-    height: "1px",
-    minHeight: "0",
-    opacity: "0",
-    pointerEvents: "none",
-  });
-  document.body.append(area);
-  try {
-    area.focus({ preventScroll: true });
-    area.select();
-    if (!document.execCommand("copy"))
-      throw new Error("无法复制，请允许浏览器访问剪贴板后重试");
-  } finally {
-    area.remove();
-    focused?.focus({ preventScroll: true });
-  }
-}
+const copyTextToClipboard = copyCodeText;
+
 const metadata = [
   "title",
   "status",
@@ -373,8 +347,10 @@ export class Notebook {
     }
   }
   cellHTML(cell, index) {
-    const editing = this.editing.has(cell.id) || cell.type !== "markdown";
+    const editing =
+      this.editing.has(cell.id) || !["markdown", "code"].includes(cell.type);
     const preview = cell.type === "markdown" && !editing;
+    const codePreview = cell.type === "code" && !editing;
     return `<div class="nb-insert"><button data-nb="insert" data-index="${index}" title="在此插入单元格">＋</button></div><article class="nb-cell ${this.active === cell.id ? "active" : ""} ${preview ? "rich-mode" : ""} ${cell.type === "table" ? "nb-cell-table" : ""}" data-cell="${cell.id}" tabindex="0"><div class="nb-gutter">[${String(index + 1).padStart(2, "0")}]</div><div class="nb-cell-main"><div class="nb-cell-bar"><div><span class="nb-cell-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><select data-cell-type aria-label="单元格类型">${Object.entries(
       labels,
     )
@@ -384,7 +360,7 @@ export class Notebook {
       )
       .join(
         "",
-      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}"><span class="nb-toggle-prefix">切换到</span>${preview ? "源码" : "所见即所得"}</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
+      )}</select>${cell.type === "code" ? `<select class="nb-language" data-language aria-label="代码语言">${languageOptions(cell.language)}</select>` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}"><span class="nb-toggle-prefix">切换到</span>${preview ? "源码" : "所见即所得"}</button>` : ""}${cell.type === "code" ? `<button data-nb="toggle" class="button small">${codePreview ? "编辑代码" : "代码预览"}</button><button data-nb="code-copy" class="text-button">复制</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : codePreview ? renderCodeBlock(cell.source, cell.language) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
       <div class="nb-cell-files">${this.filesHTML(cell.attachment_ids)}</div>${cell.type === "file" ? '<button class="nb-upload" data-nb="cell-file">＋ 上传图片或文件 <span>也可以直接粘贴截图 · 单个最大 25 MB</span></button>' : ""}</div></article>`;
   }
   tableRows(cell) {
@@ -717,6 +693,7 @@ export class Notebook {
       cells = structuredClone(this.queue.data.cells);
     cells.splice(index, 0, cell);
     this.active = cell.id;
+    if (type === "code") this.editing.add(cell.id);
     this.changeCells(cells);
     this.renderCells(focus ? cell.id : undefined);
     return cell.id;
@@ -739,6 +716,9 @@ export class Notebook {
     } else if (target.matches("[data-language]")) {
       const cell = this.cell(target.closest("[data-cell]").dataset.cell);
       cell.language = target.value;
+      const preview = this.cellElement(cell.id).querySelector(".nb-code-block");
+      if (preview)
+        preview.outerHTML = renderCodeBlock(cell.source, cell.language);
       this.queue.change({ cells: this.queue.data.cells });
     } else if (target.matches("[data-meta]")) {
       let value = target.value;
@@ -824,6 +804,11 @@ export class Notebook {
     }
   }
   async handleClick(event) {
+    const codeButton = event.target.closest("[data-code-action]");
+    if (codeButton) {
+      await codeBlockAction(codeButton);
+      return;
+    }
     for (const menu of $$(".nb-grid-menu[open]", this.root)) {
       if (!menu.contains(event.target)) menu.open = false;
     }
@@ -834,6 +819,11 @@ export class Notebook {
     const action = button.dataset.nb,
       id = button.closest("[data-cell]")?.dataset.cell;
     if (id) this.setActive(id);
+    if (action === "code-copy") {
+      await copyCodeText(this.cell(id).source);
+      this.toast("代码已复制");
+      return;
+    }
     if (action === "export-notebook-pdf") {
       const key = "cell-export-" + newId();
       sessionStorage.setItem(

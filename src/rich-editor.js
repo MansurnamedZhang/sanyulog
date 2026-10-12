@@ -2,7 +2,13 @@ import { normalizeMermaidFences } from "../static/mermaid-source.mjs";
 import { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import CodeBlock from "@tiptap/extension-code-block";
+import CodeBlock from "@tiptap/extension-code-block-lowlight";
+import {
+  highlighter,
+  codeLanguage,
+  languageOptions,
+  codeBlockAction,
+} from "../static/code-blocks.mjs";
 import { Markdown } from "@tiptap/markdown";
 import { TableKit } from "@tiptap/extension-table";
 import { InlineMath, BlockMath } from "@tiptap/extension-mathematics";
@@ -49,15 +55,67 @@ const DiagramCodeBlock = CodeBlock.extend({
     return ({ node, editor, getPos }) => {
       const isDiagram = node.attrs.language?.toLowerCase() === "mermaid";
       if (!isDiagram) {
+        let currentNode = node;
+        const dom = document.createElement("div");
+        dom.className = "nb-code-block";
+        const controls = document.createElement("div");
+        controls.className = "nb-code-toolbar";
+        controls.contentEditable = "false";
+        const selector = document.createElement("select");
+        selector.setAttribute("aria-label", "代码块语言");
+        selector.innerHTML = languageOptions(node.attrs.language);
+        const actions = document.createElement("div");
+        actions.className = "nb-code-actions";
+        actions.innerHTML =
+          '<button type="button" data-code-action="wrap" aria-pressed="false">自动换行</button><button type="button" data-code-action="copy">复制代码</button>';
+        controls.append(selector, actions);
         const pre = document.createElement("pre");
         const code = document.createElement("code");
         code.className = node.attrs.language
           ? `language-${node.attrs.language}`
           : "";
         pre.append(code);
+        dom.append(controls, pre);
+        dom.dataset.codeLanguage = codeLanguage(node.attrs.language);
+        selector.onchange = (event) => {
+          event.stopPropagation();
+          const pos = getPos();
+          if (typeof pos !== "number") return;
+          // Replace the complete block so Lowlight refreshes even when the
+          // selection is elsewhere; content and selection positions stay intact.
+          const updated = currentNode.type.create(
+            { ...currentNode.attrs, language: selector.value },
+            currentNode.content,
+            currentNode.marks,
+          );
+          const transaction = editor.state.tr.replaceWith(
+            pos,
+            pos + currentNode.nodeSize,
+            updated,
+          );
+          editor.view.dispatch(
+            transaction.setSelection(
+              editor.state.selection.getBookmark().resolve(transaction.doc),
+            ),
+          );
+        };
+        controls.onclick = (event) => {
+          event.stopPropagation();
+          const button = event.target.closest("[data-code-action]");
+          if (button)
+            codeBlockAction(button, currentNode.textContent).catch((error) => {
+              button.textContent = error.message;
+            });
+        };
         return {
-          dom: pre,
+          dom,
           contentDOM: code,
+          stopEvent: (event) => controls.contains(event.target),
+          ignoreMutation: (mutation) =>
+            mutation.type !== "selection" &&
+            (controls.contains(mutation.target) ||
+              (mutation.type === "attributes" &&
+                [dom, pre, code].includes(mutation.target))),
           update(nextNode) {
             if (
               nextNode.type !== node.type ||
@@ -67,6 +125,9 @@ const DiagramCodeBlock = CodeBlock.extend({
             code.className = nextNode.attrs.language
               ? `language-${nextNode.attrs.language}`
               : "";
+            currentNode = nextNode;
+            dom.dataset.codeLanguage = codeLanguage(nextNode.attrs.language);
+            selector.innerHTML = languageOptions(nextNode.attrs.language);
             return true;
           },
         };
@@ -188,7 +249,12 @@ export function createRichEditor(element, source, onChange, renderDiagram) {
         link: { openOnClick: false, autolink: false },
         codeBlock: false,
       }),
-      DiagramCodeBlock.configure({ renderDiagram }),
+      DiagramCodeBlock.configure({
+        renderDiagram,
+        lowlight: highlighter,
+        enableTabIndentation: true,
+        tabSize: 4,
+      }),
       Markdown,
       TableKit.configure({ table: { resizable: false } }),
       Image.configure({ allowBase64: false }),
