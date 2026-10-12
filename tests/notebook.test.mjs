@@ -210,7 +210,7 @@ test("Mermaid fences keep diagram text escaped and leave CSS code alone", () => 
   assert.ok(
     core
       .renderMarkdown("```css\na { color: red }\n```")
-      .includes("<pre><code>"),
+      .includes('data-code-language="css"'),
   );
 });
 test("pasted Mermaid indentation is normalized without changing labels or other code", () => {
@@ -268,9 +268,9 @@ test(
       "<td>0.001</td>",
       "<li>第一项</li>",
       'href="https://example.com"',
-      "    print(&quot;x&quot;)",
     ])
       assert.ok(html.includes(part), part);
+    assert.match(html.replace(/<[^>]*>/g, ""), /    print\(&quot;x&quot;\)/);
     const hostile = core.renderMarkdown(
       "<img src=x onerror=alert(1)>\n\n[x](javascript:alert)\n\n![remote](https://example.com/a.png)",
     );
@@ -549,7 +549,7 @@ test("whole-notebook export includes metadata and every CSV row in order", async
   assert.match(html, /条目55/);
   assert.equal((html.match(/<tr>/g) || []).length, 56);
   assert(html.indexOf("正文") < html.indexOf("条目55"));
-  assert(html.indexOf("条目55") < html.indexOf("print(1)"));
+  assert(html.indexOf("条目55") < html.indexOf('data-code-language="python"'));
   assert.match(html, /运行结果/);
   const withFiles = renderNotebookHTML(
     {

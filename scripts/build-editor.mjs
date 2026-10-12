@@ -2,6 +2,15 @@ import { build } from "esbuild";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 await build({
+  entryPoints: ["src/code-runtime.js"],
+  bundle: true,
+  format: "esm",
+  target: ["es2022"],
+  minify: true,
+  outfile: "static/vendor/code-runtime.mjs",
+  legalComments: "linked",
+});
+await build({
   entryPoints: ["src/rich-editor.js"],
   bundle: true,
   format: "esm",
@@ -10,6 +19,17 @@ await build({
   minify: true,
   outfile: "static/vendor/rich-editor.js",
   legalComments: "linked",
+  plugins: [
+    {
+      name: "shared-code-runtime",
+      setup(builder) {
+        builder.onResolve({ filter: /static\/code-blocks\.mjs$/ }, () => ({
+          path: "../code-blocks.mjs",
+          external: true,
+        }));
+      },
+    },
+  ],
 });
 await build({
   entryPoints: ["src/mermaid-runtime.js"],

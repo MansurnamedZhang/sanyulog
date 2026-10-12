@@ -33,11 +33,12 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: npm ci --ignore-scripts
       - run: npm run build:editor
-      - run: git diff --exit-code -- static/vendor/rich-editor.js static/vendor/rich-editor.LICENSE.txt static/vendor/mermaid-runtime.js static/vendor/mermaid-runtime.js.LEGAL.txt
+      - run: git diff --exit-code -- static/vendor/rich-editor.js static/vendor/rich-editor.LICENSE.txt static/vendor/mermaid-runtime.js static/vendor/mermaid-runtime.js.LEGAL.txt static/vendor/code-runtime.mjs
       - run: npm run check
       - run: npm run format:check
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
+      - run: npm run test:code-ui
       - run: python -m unittest discover -s tests -v
       - run: git diff --check

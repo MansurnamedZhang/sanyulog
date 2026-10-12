@@ -388,7 +388,9 @@ const assert = require("node:assert/strict");
       if (width === 2560 && process.env.UI_WIDE_CAPTURE)
         await page.screenshot({ path: process.env.UI_WIDE_CAPTURE });
       if (width === 2560 && process.env.UI_WORKBENCH_DESIGN_HTML) {
-        const css = fs.readFileSync("static/style.css", "utf8");
+        const css =
+          fs.readFileSync("static/style.css", "utf8") +
+          fs.readFileSync("static/code-blocks.css", "utf8");
         const logo =
           "data:image/svg+xml;base64," +
           fs.readFileSync("static/brand/sanyu-mark.svg").toString("base64");
