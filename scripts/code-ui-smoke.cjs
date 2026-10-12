@@ -59,9 +59,10 @@ const assert = require("node:assert/strict");
       "# " +
       "a".repeat(250);
     await codeSource.fill(powershell);
-    await codeCell.locator("[data-language]").selectOption("powershell");
+    await codeCell.locator("[data-language]").fill("powershell");
     await codeCell.locator('[data-nb="toggle"]').click();
     assert.equal(await codeCell.locator("pre code").textContent(), powershell);
+
     assert((await codeCell.locator(".hljs-variable").count()) > 0);
     await codeCell.locator('[data-code-action="copy"]').click();
     assert.equal(
@@ -101,6 +102,30 @@ const assert = require("node:assert/strict");
       "powershell",
     );
     assert.equal(await codeCell.locator("pre code").textContent(), powershell);
+
+    // A language missing from the suggestions must remain editable and saved.
+    await codeCell.locator("[data-language]").fill("matlab");
+    assert.equal(
+      await codeCell
+        .locator(".nb-code-block")
+        .getAttribute("data-code-language"),
+      "matlab",
+    );
+    await codeCell.focus();
+    await page.keyboard.press("Control+s");
+    await page.waitForFunction(() =>
+      document
+        .querySelector("[data-save-status]")
+        ?.textContent.includes("所有修改已保存"),
+    );
+    await page.reload();
+    await codeCell.locator(".nb-code-block").waitFor();
+    assert.equal(
+      await codeCell.locator("[data-language]").inputValue(),
+      "matlab",
+    );
+    assert.equal(await codeCell.locator("pre code").textContent(), powershell);
+    await codeCell.locator("[data-language]").fill("powershell");
 
     await first.locator('[data-nb="toggle"]').click();
     const source = first.locator("[data-source]");
