@@ -40,5 +40,6 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run test:code-ui
+      - run: npm run test:database-ui
       - run: python -m unittest discover -s tests -v
       - run: git diff --check

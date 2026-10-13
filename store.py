@@ -158,10 +158,13 @@ class Store:
             if not isinstance(identifier, str) or len(identifier) != 32 or any(ch not in '0123456789abcdef' for ch in identifier) or identifier in ids:
                 raise ValueError('单元格 ID 无效或重复')
             ids.add(identifier)
-            if cell['type'] not in ['markdown', 'code', 'log', 'file', 'table']:
+            if cell['type'] not in ['markdown', 'code', 'log', 'file', 'table', 'database']:
                 raise ValueError('单元格类型无效')
             if not isinstance(cell['source'], str) or len(cell['source']) > 500000:
                 raise ValueError('单元格内容最多 500000 字符')
+            if cell['type'] == 'database':
+                from database_blocks import validate_database
+                validate_database(cell['source'])
             if cell['type'] == 'table':
                 try:
                     rows = list(csv.reader(io.StringIO(cell['source'].lstrip('\ufeff'), newline=''), strict=True))
@@ -477,6 +480,9 @@ class Store:
                         values = [str(v).replace('&', '&#38;').replace('|', '&#124;').replace('<', '&#60;').replace('>', '&#62;').replace('\r', '').replace('\n', '&#10;') for v in row]
                         return '| '+' | '.join(values+['']*(width-len(values)))+' |'
                     lines.extend([table_line(rows[0]), table_line(['---']*width), *[table_line(row) for row in rows[1:]], ''])
+            elif cell['type'] == 'database':
+                from database_blocks import database_markdown
+                lines.extend([database_markdown(source), ''])
             elif cell['type'] in ['code', 'log']:
                 fence = '`' * max(3, max((len(part) for part in __import__('re').findall(r'`+', source)), default=0)+1)
                 lines.extend([fence+(cell['language'] if cell['type']=='code' else 'text'), source, fence, ''])

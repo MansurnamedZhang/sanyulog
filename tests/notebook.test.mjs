@@ -451,6 +451,7 @@ test("grid paste keeps paragraphs in one cell and still accepts Excel regions", 
   notebook.renderCells = () => {};
   notebook.renderTable = () => {};
   notebook.fitGridRow = () => {};
+  notebook.database = { input: () => false };
   notebook.toast = (message) => {
     throw new Error(message);
   };

@@ -1,4 +1,5 @@
 import { escapeHTML, parseCSV, renderMarkdown } from "./notebook-core.mjs";
+import { parseDatabase, databaseHTML } from "./database-core.mjs";
 import { renderCodeBlock } from "./code-blocks.mjs";
 
 const labels = {
@@ -7,6 +8,7 @@ const labels = {
   log: "日志",
   file: "附件",
   table: "表格数据",
+  database: "数据库",
 };
 const imageTypes = new Set([
   "image/png",
@@ -68,6 +70,8 @@ export function renderNotebookHTML(
       if (cell.type === "markdown")
         body = renderMarkdown(cell.source || "", { codeControls: false });
       else if (cell.type === "table") body = tableHTML(cell.source || "");
+      else if (cell.type === "database")
+        body = databaseHTML(parseDatabase(cell.source));
       else if (cell.type === "code")
         body = renderCodeBlock(cell.source || "", cell.language, {
           controls: false,

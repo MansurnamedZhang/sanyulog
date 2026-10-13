@@ -1,0 +1,589 @@
+/* Standalone typed databases. The existing CSV table selectors are untouched. */
+.sdb {
+  min-width: 0;
+  overflow-anchor: none;
+  font-size: 13px;
+  color: #28362f;
+}
+.sdb button,
+.sdb-dialog button {
+  cursor: pointer;
+  background: #fff;
+  color: #40554a;
+  border: 1px solid #dce4d9;
+  border-radius: 7px;
+  padding: 7px 11px;
+  min-height: 34px;
+  font: inherit;
+  white-space: nowrap;
+}
+.sdb button:hover,
+.sdb-dialog button:hover {
+  background: #eef3ee;
+}
+.sdb button:disabled,
+.sdb-dialog button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.sdb button:focus-visible,
+.sdb-dialog button:focus-visible,
+.sdb input:focus-visible,
+.sdb textarea:focus-visible {
+  outline: 2px solid #7b9d86;
+  outline-offset: -2px;
+}
+.sdb .sdb-primary,
+.sdb-dialog .sdb-primary {
+  background: #315746;
+  border-color: #315746;
+  color: white;
+}
+.sdb .sdb-primary:hover,
+.sdb-dialog .sdb-primary:hover {
+  background: #274837;
+}
+.sdb .sdb-danger,
+.sdb-dialog .sdb-danger {
+  color: #aa5550;
+}
+.sdb-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 18px 10px;
+}
+.sdb-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.sdb-heading input[data-db-title] {
+  font-size: 19px;
+  font-weight: 650;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 2px 0;
+  border-radius: 4px;
+  width: 100%;
+  min-width: 0;
+  color: #28362f;
+}
+.sdb-heading input[data-db-title]:hover {
+  border-color: #e3e7e2;
+}
+.sdb-heading p {
+  font-size: 11px;
+  color: #69746d;
+  margin: 5px 0 0;
+}
+.sdb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  padding: 10px 18px 14px;
+}
+.sdb-view-label {
+  background: #eef3ee;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #315746;
+  font-size: 12px;
+}
+.sdb-toolbar button {
+  font-size: 12px;
+}
+.sdb-toolbar [aria-pressed="true"] {
+  background: #eef3ee;
+  border-color: #a6b9aa;
+  color: #315746;
+}
+.sdb-toolbar input {
+  width: min(210px, 100%);
+  min-height: 34px;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 9px;
+  border: 1px solid #dce4d9;
+  border-radius: 7px;
+  background: #fff;
+}
+.sdb .sdb-export-button {
+  margin-left: auto;
+}
+.sdb-view-summary,
+.sdb-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 18px 12px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #f3f6f0;
+  color: #69746d;
+  font-size: 12px;
+}
+.sdb-view-summary > span,
+.sdb-selection > span {
+  flex: 1;
+  min-width: 100px;
+  overflow-wrap: anywhere;
+}
+.sdb-view-summary button,
+.sdb-selection button {
+  padding: 4px 8px;
+  min-height: 30px;
+  font-size: 11px;
+}
+.sdb-scroll {
+  margin: 0 18px;
+  overflow: auto;
+  border: 1px solid #dce4d9;
+  border-radius: 7px;
+  scrollbar-width: thin;
+}
+.sdb-grid {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.sdb-col-select {
+  width: 38px;
+}
+.sdb-col-text {
+  width: 260px;
+}
+.sdb-col-select:not(:first-child) {
+  width: 180px;
+}
+.sdb-col-multi-select {
+  width: 230px;
+}
+.sdb-col-number {
+  width: 140px;
+}
+.sdb-col-date {
+  width: 170px;
+}
+.sdb-col-checkbox {
+  width: 115px;
+}
+.sdb-col-actions {
+  width: 66px;
+}
+.sdb-grid th,
+.sdb-grid td {
+  border: 0;
+  border-right: 1px solid #e7ebe5;
+  border-bottom: 1px solid #e3e7e2;
+  vertical-align: top;
+  padding: 0;
+  text-align: left;
+}
+.sdb-grid th:last-child,
+.sdb-grid td:last-child {
+  border-right: 0;
+}
+.sdb-grid tbody tr:last-child td {
+  border-bottom: 0;
+}
+.sdb-grid thead {
+  background: #f6f8f3;
+}
+.sdb-grid th button {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  color: #617166;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  height: 38px;
+}
+.sdb-grid th button > span:first-child {
+  color: #869485;
+  margin-right: 4px;
+}
+.sdb-grid td textarea,
+.sdb-grid td input:not([type="checkbox"]) {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 11px;
+  font: inherit;
+  line-height: 1.6;
+  color: #28362f;
+  margin: 0;
+}
+.sdb-grid textarea {
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 40px;
+}
+.sdb-grid td input:not([type="checkbox"]) {
+  min-height: 40px;
+}
+.sdb-grid input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #315746;
+  margin: 13px 11px;
+  cursor: pointer;
+}
+.sdb-grid tbody tr:hover {
+  background: #fcfdfb;
+}
+.sdb-grid .sdb-selected {
+  background: #eef5ed;
+}
+.sdb .sdb-choice-cell {
+  display: flex;
+  align-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  white-space: normal;
+}
+.sdb-placeholder {
+  color: #a4ada5;
+  font-size: 12px;
+}
+.sdb-grid .sdb-record-actions {
+  white-space: nowrap;
+  padding: 4px;
+}
+.sdb-record-actions button {
+  padding: 3px 5px;
+  width: 27px;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+}
+.sdb-tag {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 2px 7px;
+  line-height: 1.5;
+  font-size: 12px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: #59635a;
+  background: #eaede8;
+}
+.sdb-tag-gray {
+  background: #eaede8;
+  color: #59635a;
+}
+.sdb-tag-brown {
+  background: #eee4dc;
+  color: #806043;
+}
+.sdb-tag-orange {
+  background: #f9e6d6;
+  color: #a26432;
+}
+.sdb-tag-yellow {
+  background: #f5edce;
+  color: #856c2c;
+}
+.sdb-tag-green {
+  background: #e2eee5;
+  color: #315746;
+}
+.sdb-tag-blue {
+  background: #e7eff9;
+  color: #39587e;
+}
+.sdb-tag-purple {
+  background: #eee8f5;
+  color: #73558d;
+}
+.sdb-tag-pink {
+  background: #f7e6ed;
+  color: #a45276;
+}
+.sdb-tag-red {
+  background: #f7e4e2;
+  color: #a25049;
+}
+.sdb-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: #69746d;
+}
+.sdb-empty b {
+  color: #40554a;
+  font-weight: 550;
+}
+.sdb-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+}
+.sdb-empty button {
+  display: block;
+  margin: 12px auto 0;
+}
+.sdb-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  color: #69746d;
+  font-size: 11px;
+}
+.sdb-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sdb-footer button {
+  border: 0;
+  font-size: 11px;
+  min-height: 30px;
+  padding: 3px 6px;
+}
+.sdb-dialog {
+  width: min(480px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 40px);
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid #dce4d9;
+  border-radius: 12px;
+  color: #28362f;
+  font:
+    13px/1.6 "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+  box-shadow: 0 20px 70px #183b2320;
+}
+.sdb-dialog::backdrop {
+  background: #203b3044;
+}
+.sdb-dialog h3 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.sdb-dialog h3 small,
+.sdb-dialog-heading > span {
+  font-size: 12px;
+  color: #69746d;
+  font-weight: 400;
+}
+.sdb-dialog label {
+  display: block;
+  margin: 14px 0;
+  color: #617166;
+  font-size: 12px;
+}
+.sdb-dialog input:not([type="checkbox"]),
+.sdb-dialog select {
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  font: inherit;
+  color: #28362f;
+  background: #fff;
+  border: 1px solid #dce4d9;
+  border-radius: 6px;
+  margin-top: 5px;
+}
+.sdb-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid #e3e7e2;
+}
+.sdb-hint {
+  font-size: 11px;
+  color: #869184;
+  line-height: 1.7;
+  margin: 10px 0;
+}
+.sdb-dialog-error {
+  color: #a25049;
+  font-size: 12px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.sdb-options-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+.sdb-options-heading b {
+  font-weight: 550;
+}
+.sdb-options-heading button {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.sdb-option-list {
+  max-height: 270px;
+  overflow: auto;
+  padding-right: 3px;
+}
+.sdb-option-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 68px 30px;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0;
+}
+.sdb-option-row input,
+.sdb-option-row select {
+  margin-top: 0 !important;
+  font-size: 12px !important;
+  padding: 5px 7px !important;
+}
+.sdb-option-row button {
+  padding: 3px;
+  width: 30px;
+}
+.sdb-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid #0001;
+}
+.sdb-property-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid #edf0ea;
+}
+.sdb-property-icon {
+  color: #869184;
+  width: 23px;
+  font-size: 12px;
+}
+.sdb-property-row .sdb-property-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding: 3px;
+}
+.sdb-property-name small {
+  display: block;
+  color: #869184;
+  font-size: 11px;
+}
+.sdb-property-row > button:not(.sdb-property-name) {
+  padding: 5px 7px;
+}
+.sdb-picker {
+  width: min(360px, calc(100vw - 24px));
+}
+.sdb-picker [data-choice-search] {
+  margin: 10px 0;
+}
+.sdb-picker [data-choice-list] {
+  max-height: 300px;
+  overflow: auto;
+  padding: 5px 0;
+}
+.sdb-picker [data-choice-list] button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  width: 100%;
+  white-space: normal;
+  border: 0;
+  padding: 7px;
+}
+.sdb-picker [aria-pressed="true"] {
+  background: #f0f5ee;
+}
+.sdb-export {
+  overflow-wrap: anywhere;
+}
+.sdb-export td {
+  vertical-align: top;
+}
+.sdb-export .sdb-tag {
+  margin: 2px 4px 2px 0;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+@media (max-width: 600px) {
+  .sdb-heading {
+    padding: 14px 10px 8px;
+    gap: 8px;
+  }
+  .sdb-heading input[data-db-title] {
+    font-size: 17px;
+  }
+  .sdb-heading .sdb-primary {
+    font-size: 12px;
+    padding: 7px 9px;
+  }
+  .sdb-heading p span {
+    display: block;
+  }
+  .sdb-toolbar {
+    padding: 8px 10px 10px;
+    gap: 5px;
+  }
+  .sdb-toolbar input {
+    flex: 1 0 140px;
+    width: 150px;
+  }
+  .sdb-toolbar button {
+    padding: 5px 9px;
+  }
+  .sdb .sdb-export-button {
+    margin-left: 0;
+  }
+  .sdb-scroll {
+    margin: 0 10px;
+  }
+  .sdb-view-summary,
+  .sdb-selection {
+    margin: 0 10px 10px;
+  }
+  .sdb-footer {
+    padding: 10px;
+  }
+  .sdb-dialog {
+    padding: 16px;
+  }
+  .sdb-option-row {
+    grid-template-columns: 10px minmax(0, 1fr) 60px 28px;
+    gap: 5px;
+  }
+}
