@@ -68,6 +68,14 @@ export class DatabaseUI {
     if ((d.view.filter || d.view.sort || state.search) && !state.frozenRows)
       state.frozenRows = visibleRows(d, state.search).map((r) => r.id);
   }
+  displayedRows(id, data = this.data(id)) {
+    const state = this.state(id);
+    return state.frozenRows
+      ? state.frozenRows
+          .map((rowId) => data.rows.find((r) => r.id === rowId))
+          .filter(Boolean)
+      : visibleRows(data, state.search);
+  }
   data(id) {
     const cell = this.nb.cell(id);
     if (!cell || cell.type !== "database") throw new Error("数据库块已移除");
@@ -102,11 +110,7 @@ export class DatabaseUI {
   }
   content(id, d) {
     const state = this.state(id),
-      rows = state.frozenRows
-        ? state.frozenRows
-            .map((id) => d.rows.find((r) => r.id === id))
-            .filter(Boolean)
-        : visibleRows(d, state.search);
+      rows = this.displayedRows(id, d);
     state.page = Math.min(
       state.page,
       Math.max(0, Math.ceil(rows.length / pageSize) - 1),
@@ -274,7 +278,7 @@ export class DatabaseUI {
       else state.selected.delete(el.dataset.row);
       this.render(id);
     } else if (el.matches("[data-db-select-all]")) {
-      const rows = visibleRows(this.data(id), state.search).slice(
+      const rows = this.displayedRows(id).slice(
         state.page * pageSize,
         (state.page + 1) * pageSize,
       );
@@ -361,6 +365,7 @@ export class DatabaseUI {
           `删除 ${ids.size} 条数据库记录？此操作会删除这些记录的全部属性值。`,
         )
       ) {
+        state.frozenRows = null;
         this.mutate(id, (d) => (d.rows = d.rows.filter((r) => !ids.has(r.id))));
         state.selected.clear();
         this.render(id);
@@ -413,6 +418,30 @@ export class DatabaseUI {
   dialog(className, html, anchor, onClose) {
     const restore = this.scrollSnapshot(anchor),
       d = document.createElement("dialog");
+    const blockId = anchor.closest("[data-db-id]")?.dataset.dbId;
+    const parentDialog = anchor.closest("dialog");
+    const columnId =
+      anchor.dataset.column || anchor.closest("[data-column]")?.dataset.column;
+    const action = anchor.dataset.db,
+      propertyAction = anchor.dataset.prop,
+      rowId = anchor.dataset.row;
+    const resolveAnchor = () => {
+      if (anchor.isConnected) return anchor;
+      if (parentDialog?.isConnected && propertyAction) {
+        return parentDialog.querySelector(
+          (columnId ? `[data-column="${columnId}"] ` : "") +
+            `[data-prop="${propertyAction}"]`,
+        );
+      }
+      const host = blockId
+        ? this.nb.root.querySelector(`[data-db-id="${blockId}"]`)
+        : null;
+      return host && action
+        ? host.querySelector(
+            `[data-db="${action}"]${rowId ? `[data-row="${rowId}"]` : ""}${columnId ? `[data-column="${columnId}"]` : ""}`,
+          )
+        : null;
+    };
     d.className = "sdb-dialog " + className;
     d.innerHTML = html;
     document.body.append(d);
@@ -422,9 +451,9 @@ export class DatabaseUI {
       () => {
         this.dialogs.delete(d);
         d.remove();
-        restore();
-        if (anchor.isConnected) anchor.focus({ preventScroll: true });
         onClose?.();
+        restore();
+        resolveAnchor()?.focus({ preventScroll: true });
       },
       { once: true },
     );

@@ -96,6 +96,18 @@ const assert = require("node:assert/strict");
       .locator(".sdb-picker")
       .getByRole("button", { name: "进行中", exact: true })
       .click();
+    await page.waitForFunction(
+      () => document.activeElement?.matches('[data-db="choose"]'),
+      {},
+      { timeout: 1500 },
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        document.activeElement?.matches('[data-db="choose"]'),
+      ),
+      true,
+      "single-choice close returns keyboard focus to current cell",
+    );
     await row.locator('[data-db="choose"]').nth(1).click();
     const picker = page.locator(".sdb-picker");
     for (const value of ["LoRA", "对照"]) {
@@ -103,6 +115,24 @@ const assert = require("node:assert/strict");
       await picker.locator('[data-choice="create"]').click();
     }
     await picker.getByRole("button", { name: "完成选择", exact: true }).click();
+    await page.waitForFunction(
+      () => document.activeElement?.matches('[data-db="choose"]'),
+      {},
+      { timeout: 1500 },
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        document.activeElement?.matches('[data-db="choose"]'),
+      ),
+      true,
+      "multichoice close returns keyboard focus to current cell",
+    );
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.evaluate(() => !!document.activeElement?.closest(".sdb-grid")),
+      true,
+      "Tab continues within database",
+    );
     assert.equal(await row.locator(".sdb-tag").count(), 3);
     await block.locator('[data-db="add-row"]').first().click();
     await block
@@ -137,6 +167,16 @@ const assert = require("node:assert/strict");
     assert.equal(
       await block.locator('thead [data-db="property"]').first().innerText(),
       "Aa 名称 ⌄",
+    );
+    await block.locator('[data-db="property"]').first().click();
+    property = page.locator(".sdb-property-dialog");
+    await property
+      .getByRole("button", { name: "保存属性", exact: true })
+      .click();
+    await page.waitForFunction(
+      () => document.activeElement?.matches('[data-db="property"]'),
+      {},
+      { timeout: 1500 },
     );
     // Persistent numeric sorting and choice filtering.
     await block.locator('[data-db="sort"]').click();
@@ -207,6 +247,30 @@ const assert = require("node:assert/strict");
         .evaluate((el) => el === document.activeElement),
       true,
     );
+    await block.locator('[data-db="refresh-view"]').click();
+    // A row excluded by the edited value stays visible until manual refresh.
+    // "Select page" must still select that visible row, not a newly computed view.
+    await block.locator('[data-db="choose"]').nth(1).click();
+    await page
+      .locator(".sdb-picker")
+      .getByRole("button", { name: "待开始", exact: true })
+      .click();
+    assert.equal(await block.locator("[data-db-record]").count(), 1);
+    await block.locator("[data-db-select-all]").evaluate((el) => {
+      el.checked = true;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.equal(
+      await block.locator("[data-db-select-row]:checked").count(),
+      1,
+      "select page must use the displayed frozen view",
+    );
+    await block.locator('[data-db="clear-selection"]').click();
+    await block.locator('[data-db="choose"]').nth(1).click();
+    await page
+      .locator(".sdb-picker")
+      .getByRole("button", { name: "处理中", exact: true })
+      .click();
     await block.locator('[data-db="refresh-view"]').click();
     if (process.env.UI_SCREENSHOTS) {
       fs.mkdirSync(process.env.UI_SCREENSHOTS, { recursive: true });
@@ -314,6 +378,75 @@ const assert = require("node:assert/strict");
     const pdf = await popup.pdf({ format: "A4", printBackground: true });
     assert(pdf.length > 5000);
     await popup.close();
+    // Regression: sorting edits must never select and delete a row from the next page.
+    await page.keyboard.press("Control+s");
+    await page.waitForFunction(
+      () =>
+        document.querySelector("[data-save-status]")?.textContent ===
+        "所有修改已保存",
+    );
+    await page.evaluate(async () => {
+      const { newId } = await import("/notebook-core.mjs");
+      const { emptyValue } = await import("/database-core.mjs");
+      const s = await (await fetch("/api/state")).json();
+      const r = s.records.find((r) => r.title === "视频数据配比与训练记录");
+      const cell = r.cells.find((c) => c.type === "database"),
+        d = JSON.parse(cell.source);
+      const name = d.columns.find((c) => c.type === "text"),
+        number = d.columns.find((c) => c.type === "number");
+      d.rows = Array.from({ length: 51 }, (_, i) => ({
+        id: newId(),
+        values: {
+          ...Object.fromEntries(
+            d.columns.map((c) => [c.id, emptyValue(c.type)]),
+          ),
+          [name.id]: "R" + i,
+          [number.id]: i,
+        },
+      }));
+      d.view = { filter: null, sort: { column: number.id, direction: "asc" } };
+      cell.source = JSON.stringify(d);
+      const response = await fetch("/api/records/" + r.id, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: r.version, cells: r.cells }),
+      });
+      if (!response.ok)
+        throw new Error("Fixture update failed " + response.status);
+    });
+    await page.reload();
+    await block.waitFor();
+    assert.equal(await block.locator("[data-db-record]").count(), 50);
+    await block
+      .locator("[data-db-record]")
+      .first()
+      .locator('input[type="number"]')
+      .fill("1000");
+    await block.locator("[data-db-record]").first().locator("textarea").click();
+    await block.locator("[data-db-select-all]").evaluate((el) => {
+      el.checked = true;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.equal(
+      await block.locator("[data-db-select-row]:checked").count(),
+      50,
+      "select exactly the 50 displayed records after sort edit",
+    );
+    page.once("dialog", (d) => d.accept());
+    await block.locator('[data-db="delete-selected"]').click();
+    await page.keyboard.press("Control+s");
+    await page.waitForFunction(
+      () =>
+        document.querySelector("[data-save-status]")?.textContent ===
+        "所有修改已保存",
+    );
+    saved = await snapshot();
+    data = JSON.parse(saved.cells.find((c) => c.type === "database").source);
+    assert.equal(data.rows.length, 1);
+    assert.equal(
+      data.rows[0].values[data.columns.find((c) => c.type === "text").id],
+      "R50",
+    );
     assert.deepEqual(errors, []);
     console.log(
       "Database UI passed: separate block, six types, multiline, stable IDs, choice autosave, properties, filter/sort, reload, CSV, PDF, 5 viewports; legacy table unchanged.",

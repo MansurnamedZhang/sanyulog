@@ -44,6 +44,6 @@ Preserve existing CSV table handlers and source. Six types: text, select, multi-
 **Files:** README.md, CHANGELOG.md, package.json/package-lock.json, .github/workflows/checks.yml.
 
 - [x] Document v0.13.0 feature and backup compatibility, add database UI to CI.
-- [ ] Run syntax, formatting, full Node/Python, build and both new/existing browser suites.
-- [ ] Independent whole-branch review; fix material findings and rerun relevant checks.
+- [x] Run syntax, formatting, full Node/Python, build and both new/existing browser suites.
+- [x] Independent whole-branch review; fix material findings and rerun relevant checks.
 - [ ] Commit and integrate clean branch, push; confirm GitHub checks before deployment handoff. Report handoff separately from live deployment.
