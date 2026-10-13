@@ -35,6 +35,20 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(other.get_record(saved['id']), saved)
         self.assertFalse((self.root/'process.db').exists())
 
+    def test_database_block_preserves_typed_values_and_backup(self):
+        import json
+        from test_database import database, ident
+        cell = dict(id=ident(999), type='database', source=json.dumps(database(),ensure_ascii=False), language='', attachment_ids=[])
+        saved = self.s.update_record(self.r['id'], {'version':1,'cells':[cell]})
+        self.assertEqual(self.factory(self.root,self.dsn).get_record(saved['id'])['cells'],[cell])
+        self.s.restore(self.s.backup())
+        self.assertEqual(self.s.get_record(saved['id'])['cells'],[cell])
+        bad=database();bad['rows'][0]['values'][ident(4)]=True
+        cell['source']=json.dumps(bad)
+        with self.assertRaises(ValueError):
+            self.s.update_record(saved['id'],{'version':saved['version'],'cells':[cell]})
+        self.assertEqual(self.s.get_record(saved['id'])['version'],saved['version'])
+
     def test_state_batches_related_data_with_postgresql_rows(self):
         records = [self.r] + [self.s.create_record({'project_id': self.p['id'], 'title': f'笔记 {i}'}) for i in range(5)]
         self.s.add_entry(records[0]['id'], {'kind': '问题', 'body': '第一段\n第二段'})

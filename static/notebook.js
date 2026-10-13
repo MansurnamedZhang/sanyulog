@@ -1,3 +1,5 @@
+import { DatabaseUI } from "./database-ui.mjs";
+import { createDatabase } from "./database-core.mjs";
 import { renderMermaid } from "./mermaid-renderer.js";
 import {
   renderCodeBlock,
@@ -47,11 +49,17 @@ const labels = {
   log: "日志 / 原文",
   file: "图片 / 附件",
   table: "表格数据",
+  database: "数据库",
 };
 const makeCell = (type = "markdown") => ({
   id: newId(),
   type,
-  source: type === "table" ? "列 1,列 2,列 3\r\n,,\r\n,," : "",
+  source:
+    type === "database"
+      ? JSON.stringify(createDatabase())
+      : type === "table"
+        ? "列 1,列 2,列 3\r\n,,\r\n,,"
+        : "",
   language: type === "code" ? "python" : "",
   attachment_ids: [],
 });
@@ -112,6 +120,7 @@ export class Notebook {
       }
     });
     this.controller = new AbortController();
+    this.database = new DatabaseUI(this);
     this.active = "";
     this.editing = new Set();
     this.richEditors = new Map();
@@ -191,6 +200,7 @@ export class Notebook {
     }
     const top = this.root.scrollTop;
     for (const area of $$("[data-source]", this.root)) this.grow(area);
+    this.database.mount();
     this.root.scrollTop = top;
   }
   dispose() {
@@ -244,9 +254,9 @@ export class Notebook {
             `<option value="${r.id}" ${r.id === d.related_id ? "selected" : ""}>${esc(r.title)}</option>`,
         )
         .join("")}</select></label></div></div></details>
-      <div class="nb-toolbar"><div><span class="insert-label">插入</span><button class="button small" data-nb="add" data-type="markdown">＋ 文本</button><button class="button small" data-nb="add" data-type="code">＋ 代码</button><button class="button small" data-nb="add" data-type="log">＋ 日志</button><button class="button small" data-nb="add" data-type="file">＋ 附件</button><button class="button small" data-nb="add" data-type="table">＋ 表格</button></div><button class="text-button" data-nb="help">使用帮助</button></div>
+      <div class="nb-toolbar"><div><span class="insert-label">插入</span><button class="button small" data-nb="add" data-type="markdown">＋ 文本</button><button class="button small" data-nb="add" data-type="code">＋ 代码</button><button class="button small" data-nb="add" data-type="log">＋ 日志</button><button class="button small" data-nb="add" data-type="file">＋ 附件</button><button class="button small" data-nb="add" data-type="table">＋ 表格</button><button class="button small" data-nb="add" data-type="database">＋ 数据库</button></div><button class="text-button" data-nb="help">使用帮助</button></div>
       <div class="nb-help" data-help hidden><b>像笔记本一样，持续记录</b><p>源码模式 Shift+Enter：保存并进入下一格 · Ctrl+S：立即保存 · 代码格内 Tab：缩进。空闲 0.8 秒后自动保存。</p><p>手动切换源码 / 所见即所得；点击其他块不会改变模式。所见即所得可直接编辑文字和表格，点击公式可修改 LaTeX。表格内 Enter 换段，Shift+Enter 换行，Tab 切换单元格。</p><p>Markdown：# 标题、**加粗**、- 列表、[链接](https://...)、表格和三反引号代码块。流程图请用 Mermaid 代码块：三反引号加 mermaid 开始，三反引号结束；也可选中图定义点击「流程图」。代码格用于记录；运行结果可放在下一格日志中。支持粘贴图片或上传任意文件。</p></div>
-      <div class="nb-cells" data-cells></div><div class="nb-end"><span>继续记下一个想法</span><div><button class="button" data-nb="append" data-type="markdown">＋ 文本单元</button><button class="button subtle" data-nb="append" data-type="code">＋ 代码</button><button class="button subtle" data-nb="append" data-type="file">＋ 图片 / 附件</button><button class="button subtle" data-nb="append" data-type="table">＋ 表格</button></div></div>
+      <div class="nb-cells" data-cells></div><div class="nb-end"><span>继续记下一个想法</span><div><button class="button" data-nb="append" data-type="markdown">＋ 文本单元</button><button class="button subtle" data-nb="append" data-type="code">＋ 代码</button><button class="button subtle" data-nb="append" data-type="file">＋ 图片 / 附件</button><button class="button subtle" data-nb="append" data-type="table">＋ 表格</button><button class="button subtle" data-nb="append" data-type="database">＋ 数据库</button></div></div>
       <div class="nb-bottom"><span data-upload-status></span><button class="text-button" data-nb="undo" hidden>↶ 撤销删除单元格</button></div><details class="nb-library"><summary>本笔记本的全部附件 <span>${this.record.attachments.length}</span></summary><div data-library></div></details><input type="file" data-file-input multiple hidden>`;
     if (d._paramRows)
       $("[data-params]", this.root).innerHTML = d._paramRows
@@ -275,6 +285,7 @@ export class Notebook {
     for (const area of $$("[data-source]", this.root)) this.grow(area);
     for (const grid of $$(".nb-data-grid", this.root)) this.layoutGrid(grid);
     this.gridResizeObserver.observe(this.root);
+    this.database.mount();
     this.mountRichEditors(focusId);
     if (focusId) {
       this.setActive(focusId);
@@ -361,7 +372,7 @@ export class Notebook {
       )
       .join(
         "",
-      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}"><span class="nb-toggle-prefix">切换到</span>${preview ? "源码" : "所见即所得"}</button>` : ""}${cell.type === "code" ? `<button data-nb="toggle" class="button small">${codePreview ? "编辑代码" : "代码预览"}</button><button data-nb="code-copy" class="text-button">复制</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "table" ? this.tableHTML(cell) : codePreview ? renderCodeBlock(cell.source, cell.language) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
+      )}</select>${cell.type === "code" ? `<input class="nb-language" data-language aria-label="代码语言" maxlength="40" placeholder="语言" value="${esc(cell.language)}" list="nb-languages">` : ""}</div><div class="nb-cell-actions">${cell.type === "markdown" ? `<span class="nb-mode-label">${preview ? "所见即所得" : "源码"}</span><button data-nb="toggle" class="button small" aria-label="${preview ? "切换到源码" : "切换到所见即所得"}"><span class="nb-toggle-prefix">切换到</span>${preview ? "源码" : "所见即所得"}</button>` : ""}${cell.type === "code" ? `<button data-nb="toggle" class="button small">${codePreview ? "编辑代码" : "代码预览"}</button><button data-nb="code-copy" class="text-button">复制</button>` : ""}${["markdown", "code", "log"].includes(cell.type) ? `<button data-nb="export-image" class="text-button" title="导出当前单元格为 PNG 图片">图片</button><button data-nb="export-pdf" class="text-button" title="导出当前单元格为 PDF">PDF</button>` : ""}<button data-nb="cell-file" class="text-button" title="向此单元格添加图片或附件">附件</button><button data-nb="up" class="text-button" title="上移单元格" ${index === 0 ? "disabled" : ""}>↑</button><button data-nb="down" class="text-button" title="下移单元格" ${index === this.queue.data.cells.length - 1 ? "disabled" : ""}>↓</button><button data-nb="cell-delete" class="text-button" title="删除单元格">×</button></div></div>${cell.type === "markdown" ? this.formatToolbar() : ""}${cell.type === "database" ? this.database.html(cell) : cell.type === "table" ? this.tableHTML(cell) : codePreview ? renderCodeBlock(cell.source, cell.language) : preview ? `<div data-rich-editor>正在加载编辑器…</div><div class="nb-rich-table-tools" hidden aria-label="表格编辑工具"><span>光标放入表格后：</span><button class="text-button" data-nb="rich-table" data-tool="row">＋ 行</button><button class="text-button" data-nb="rich-table" data-tool="column">＋ 列</button><button class="text-button" data-nb="rich-table" data-tool="delete-row">删除行</button><button class="text-button" data-nb="rich-table" data-tool="delete-column">删除列</button></div>` : `<textarea data-source class="nb-source ${cell.type === "code" ? "code" : cell.type === "log" ? "log" : ""}" spellcheck="${cell.type === "markdown"}" aria-label="${labels[cell.type]}单元格内容" placeholder="${cell.type === "markdown" ? "写下想法、步骤、结论… 支持 Markdown" : cell.type === "code" ? "粘贴命令、配置或代码…" : cell.type === "log" ? "粘贴输出、报错或原始日志…" : "添加说明，或点击下方上传文件"}">${esc(cell.source)}</textarea>`}
       <div class="nb-cell-files">${this.filesHTML(cell.attachment_ids)}</div>${cell.type === "file" ? '<button class="nb-upload" data-nb="cell-file">＋ 上传图片或文件 <span>也可以直接粘贴截图 · 单个最大 25 MB</span></button>' : ""}</div></article>`;
   }
   tableRows(cell) {
@@ -702,6 +713,7 @@ export class Notebook {
   input(event) {
     const target = event.target;
     event.stopPropagation();
+    if (this.database.input(event)) return;
     if (target.matches("[data-grid-row]")) {
       const cell = this.cell(target.closest("[data-cell]").dataset.cell),
         rows = this.tableRows(cell);
@@ -765,6 +777,7 @@ export class Notebook {
     });
   }
   change(event) {
+    if (this.database.change(event)) return;
     if (event.target.matches("[data-grid-copy-header]")) {
       event.stopPropagation();
       const selection = this.tableSelections.get(
@@ -781,6 +794,19 @@ export class Notebook {
       event.stopPropagation();
       const id = event.target.closest("[data-cell]").dataset.cell,
         cell = this.cell(id);
+      if (
+        cell.type === "database" ||
+        (event.target.value === "database" && cell.source.trim())
+      ) {
+        event.target.value = cell.type;
+        this.toast(
+          "数据库使用独立结构，请通过「＋ 数据库」新建；原块内容已保留。",
+          true,
+        );
+        return;
+      }
+      if (event.target.value === "database")
+        cell.source = JSON.stringify(createDatabase());
       if (event.target.value === "table") {
         try {
           parseCSV(cell.source);
@@ -805,6 +831,7 @@ export class Notebook {
     }
   }
   async handleClick(event) {
+    if (await this.database.click(event)) return;
     const codeButton = event.target.closest("[data-code-action]");
     if (codeButton) {
       await codeBlockAction(codeButton);
@@ -1177,6 +1204,7 @@ export class Notebook {
     if (!el) return;
     if (
       event.target.closest("[data-rich-editor]") ||
+      event.target.closest(".sdb") ||
       event.target.matches("[data-grid-row]")
     )
       return;

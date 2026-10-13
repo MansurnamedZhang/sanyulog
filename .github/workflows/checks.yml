@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18-bookworm
         env:
           POSTGRES_USER: process_log_test
           POSTGRES_PASSWORD: test_only
@@ -40,12 +40,13 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: npm run test:code-ui
+      - run: npm run test:database-ui
       - run: python -m unittest discover -s tests -v
       - run: git diff --check
       - name: Build exact checked-out application image
         run: docker build -t sanyulog:r2-check .
       - name: Verify private media modules in image without credentials
-        run: docker run --rm sanyulog:r2-check python -c "import server, r2_media, r2_reconcile"
+        run: docker run --rm sanyulog:r2-check python -c "import server, r2_media, r2_reconcile, database_blocks; from pathlib import Path; assert all(Path('static', name).is_file() for name in ('database-core.mjs', 'database-ui.mjs', 'database.css'))"
       - name: Record checked-out revision and built image ID
         run: |
           git rev-parse HEAD
